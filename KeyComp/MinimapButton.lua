@@ -74,6 +74,11 @@ function M:Init()
 
     local hl = button:CreateTexture(nil, "HIGHLIGHT")
     hl:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+    -- This highlight art is a radial glow meant to be drawn additively; the
+    -- HIGHLIGHT draw layer defaults to "BLEND", which renders its dark field as
+    -- an ugly grey square on hover. "ADD" makes the dark parts vanish so only
+    -- the soft glow shows (matches Blizzard's zoom buttons / LibDBIcon).
+    hl:SetBlendMode("ADD")
     hl:SetAllPoints(button)
 
     button:SetScript("OnClick", function(_, clicked)
