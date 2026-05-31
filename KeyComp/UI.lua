@@ -1162,21 +1162,43 @@ function UI:RenderInfo()
     self.infoNote:Show(); y = y + self.infoNote:GetStringHeight() + 8
 
     self.infoCover:ClearAllPoints(); self.infoCover:SetPoint("TOPLEFT", LX, -y)
-    self.infoCover:SetText(WHITE .. "Utility checklist" .. R .. "   " .. GREEN .. "you" .. R .. GREY .. " / " .. R .. RED .. "needs class" .. R)
+    self.infoCover:SetText(WHITE .. "Who covers each cast" .. R .. "   " .. GREY .. "names = can handle it (kick it, or dispel its type)  \226\128\148  " .. R .. RED .. "red = gap" .. R)
     self.infoCover:Show(); y = y + 18
+
+    local resolved = (cov and cov.resolved) or {}
+    -- Who in the LIVE group handles this cast: kick it (if kickable) else dispel its
+    -- type. Class-coloured first names; solo this is just you, and it fills in with
+    -- real names/classes as the group forms.
+    local function handlersFor(a)
+        local names = {}
+        for _, r in ipairs(resolved) do
+            local can = (a.kick and (r.conf.shortkick or r.conf.interrupt)) or ((not a.kick) and r.conf[a.t])
+            if can then
+                local nm = ((r.m.name or "?"):match("^[^-]+")) or r.m.name or "?"
+                local cs = classColorStr(r.m.class)
+                names[#names + 1] = (cs and ("|c" .. cs .. nm .. R)) or nm
+            end
+        end
+        return names
+    end
 
     local n = 0
     for _, a in ipairs(d.abilities or {}) do
         if n >= 16 then break end
         n = n + 1
         local row = self.infoRows[n]
-        -- "you" = your spec can remove this type, or it's kickable and you have an interrupt
-        local you = pconf[a.t] or (a.kick and (pconf.shortkick or pconf.interrupt)) or false
+        local handlers = handlersFor(a)
+        local covered = #handlers > 0
         local ic = FILL_ICON[a.t]
         local iconStr = ic and ("|T" .. ic .. ":15:15:0:0|t ") or ""
         local kickStr = a.kick and (" |T" .. FILL_ICON.shortkick .. ":13:13:0:0|t") or ""
-        local tag = you and ("  " .. GREEN .. "you" .. R) or ("  " .. RED .. (C.LABELS[a.t] or a.t) .. R)
-        local nameCol = you and WHITE or "|cffffe0e0"
+        local tag
+        if covered then
+            tag = "  " .. GREY .. "\226\134\146 " .. R .. table.concat(handlers, GREY .. ", " .. R)
+        else
+            tag = "  " .. RED .. "needs " .. (a.kick and "interrupt" or (C.LABELS[a.t] or a.t)) .. R
+        end
+        local nameCol = covered and WHITE or "|cffffe0e0"
         row:SetText(iconStr .. nameCol .. a.src .. R .. GREY .. " \226\128\148 " .. a.ab .. R .. kickStr .. tag)
         row:ClearAllPoints(); row:SetPoint("TOPLEFT", LX, -y)
         row:Show(); y = y + 16

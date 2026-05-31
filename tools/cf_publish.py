@@ -11,10 +11,15 @@ Credentials are read from the environment FIRST (for GitHub Actions), then from
   CF_API_KEY     -> the upload-API token
   CF_PROJECT_ID  -> the numeric project id
 
-  py -3.12 tools/cf_publish.py --check          # validate token, show latest retail patch
-  py -3.12 tools/cf_publish.py --zip dist/KeyComp-0.1.0.zip --release alpha \
-        --display-name "KeyComp 0.1.0" --changelog "Initial release."
-  # omit --game-version to auto-pick the latest WoW retail patch
+Game version: by default the file is tagged for the WoW version(s) named in the
+addon's own toc `## Interface` (matched to CurseForge via each version's
+apiVersion), so the CurseForge tag always matches what the addon actually
+targets. `--game-version <id>` overrides; if the toc can't be matched it falls
+back to the latest retail patch.
+
+  py -3.12 tools/cf_publish.py --check
+  py -3.12 tools/cf_publish.py --zip dist/KeyComp-0.1.2.zip --release release \
+        --display-name "KeyComp 0.1.2" --changelog "..."
 
 Dependency-free (urllib only); multipart/form-data is built by hand.
 """
@@ -24,9 +29,11 @@ import argparse
 import json
 import mimetypes
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,6 +72,30 @@ def latest_retail_version(token: str):
     return retail[-1] if retail else None
 
 
+def toc_interfaces(zip_path: Path):
+    """The ## Interface value(s) from the addon's .toc inside the zip.
+    Returns a list of numeric strings (a toc may list several, comma-separated)."""
+    with zipfile.ZipFile(zip_path) as z:
+        toc = next((n for n in z.namelist() if n.lower().endswith(".toc")), None)
+        if not toc:
+            return []
+        text = z.read(toc).decode("utf-8-sig", "replace")
+    for line in text.splitlines():
+        m = re.match(r"^\s*##\s*Interface\s*:\s*(.+)$", line)
+        if m:
+            return [p.strip() for p in m.group(1).split(",") if p.strip().isdigit()]
+    return []
+
+
+def match_game_versions(token: str, interfaces):
+    """CurseForge retail game-version ids whose apiVersion matches the toc Interface(s)."""
+    if not interfaces:
+        return []
+    want = {str(i) for i in interfaces}
+    return [v["id"] for v in api_get("/game/versions", token)
+            if v.get("gameVersionTypeID") == RETAIL_TYPE and str(v.get("apiVersion")) in want]
+
+
 def multipart(fields: dict, files: dict):
     boundary = "----curseforge" + os.urandom(12).hex()
     body = bytearray()
@@ -100,7 +131,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--zip")
     ap.add_argument("--release", choices=["alpha", "beta", "release"], default="alpha")
-    ap.add_argument("--game-version", type=int, help="game version id (default: latest retail)")
+    ap.add_argument("--game-version", type=int, help="game version id override (default: match the addon toc ## Interface)")
     ap.add_argument("--display-name")
     ap.add_argument("--changelog", default="")
     ap.add_argument("--changelog-file")
@@ -126,11 +157,19 @@ def main():
     if not zip_path.exists():
         sys.exit(f"zip not found: {zip_path}")
 
-    gv = args.game_version
-    if not gv:
-        v = latest_retail_version(token)
-        gv = v["id"]
-        print(f"auto game version: {v['name']} (id {gv})")
+    if args.game_version:
+        gvs = [args.game_version]
+        print(f"game version (override): {gvs}")
+    else:
+        ifaces = toc_interfaces(zip_path)
+        gvs = match_game_versions(token, ifaces)
+        if gvs:
+            print(f"game versions from toc Interface {ifaces}: {gvs}")
+        else:
+            v = latest_retail_version(token)
+            gvs = [v["id"]]
+            print(f"WARNING: toc Interface {ifaces} matched no CurseForge version; "
+                  f"falling back to latest retail {v['name']} (id {v['id']})")
 
     changelog = args.changelog
     if args.changelog_file:
@@ -143,7 +182,7 @@ def main():
         "changelog": changelog or "See project page.",
         "changelogType": args.changelog_type,
         "releaseType": args.release,
-        "gameVersions": [gv],
+        "gameVersions": gvs,
     }
     if args.display_name:
         metadata["displayName"] = args.display_name
