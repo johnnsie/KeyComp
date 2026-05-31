@@ -104,6 +104,25 @@ function S:Kick()
     return false
 end
 
+local REFRESH_CD = 5   -- min seconds between auto-refreshes
+S.lastRefresh = 0
+
+-- Auto-refresh so the player stops clicking Blizzard's refresh. PREFER re-running THEIR
+-- existing Group Finder search (LFGListSearchPanel_DoSearch) -- that preserves whatever
+-- they filtered (e.g. a manual "+19"), which is the only thing that narrows to the real
+-- key level (the addon can't read it). Falls back to our own broad search if they have
+-- no active one. UNVERIFIED in-client: if re-running the panel search ever causes taint
+-- ("action blocked"), switch to the Kick() path only.
+function S:Refresh(force)
+    if not force and (gt() - self.lastRefresh) < REFRESH_CD then return false end
+    self.lastRefresh = gt()
+    local panel = LFGListFrame and LFGListFrame.SearchPanel
+    if panel and type(LFGListSearchPanel_DoSearch) == "function" then
+        if pcall(LFGListSearchPanel_DoSearch, panel) then return true end
+    end
+    return self:Kick()
+end
+
 function S:OnResults()
     self.searching = false
 end
@@ -171,6 +190,13 @@ function S:Normalize(resultID, info, key)
     local aid = info.activityID or (info.activityIDs and info.activityIDs[1])
     local tank, heal, dps = memberCounts(resultID)
     local keyLevel = parseKeyFromInfo(info)
+    -- the listing's ACTUAL key isn't exposed (it's a |K..|k token in the name). The
+    -- closest signal is the leader's best run on THIS dungeon -- the same proxy the
+    -- Premade Groups Filter addon uses for its M+ "key" filter. It's a nested table, so
+    -- the earlier scalar-only dump missed it. NB: it's the leader's best, not the key.
+    local lds = info.leaderDungeonScoreInfo
+    local leaderBest = (type(lds) == "table" and lds.bestRunLevel) or 0
+    local mapScore   = (type(lds) == "table" and lds.mapScore) or 0
     return {
         resultID      = resultID,
         activityID    = aid,
@@ -180,6 +206,8 @@ function S:Normalize(resultID, info, key)
         keyLevel      = keyLevel,
         leaderName    = info.leaderName,
         leaderScore   = info.leaderOverallDungeonScore or 0,
+        leaderBest    = leaderBest,   -- leader's best completed key on this dungeon (proxy)
+        mapScore      = mapScore,
         requiredScore = info.requiredDungeonScore or 0,
         numMembers    = info.numMembers or (tank + heal + dps),
         tank = tank, heal = heal, dps = dps,
@@ -215,6 +243,29 @@ function S:Read()
             end
         end
     end
+    -- (diagnostic, temporary) stash the RAW fields of the first few listings into
+    -- SavedVariables so the exact result shape -- crucially WHERE the keystone "+N"
+    -- actually lives -- can be read off-client without the player relaying anything.
+    -- one-time test of the "if it renders, can we read it back?" idea: set a listing's
+    -- Kstring name on a FontString and read it back. If GetText returns the resolved text
+    -- ("+19") instead of the token, we CAN filter on the level after all. Runs once/session;
+    -- result persists to SavedVariables for off-client inspection.
+    if ns.db and not S._kstrDone and #results > 0 and UIParent then
+        S._kstrDone = true
+        local okI, info = pcall(C_LFGList.GetSearchResultInfo, results[1])
+        if okI and type(info) == "table" and type(info.name) == "string" then
+            ns.db.kstrRaw = info.name
+            local fs = UIParent:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+            if fs then
+                fs:SetText(info.name)
+                ns.db.kstrReadback = fs:GetText()
+                local w = fs.GetStringWidth and fs:GetStringWidth()
+                if type(w) == "number" then ns.db.kstrWidth = w end
+            end
+        end
+    end
+    -- (A temporary raw-listing dump also lived here; removed. Clean up any stale copy.)
+    if ns.db then ns.db.lastRaw, ns.db.lastRawMeta, ns.db.lastRawErr = nil, nil, nil end
     self.lastResults = out
     return out
 end

@@ -290,13 +290,13 @@ function UI:Init()
     -- ---------- Listings tab widgets ----------
     self.l_recap = fs()
     self.l_head = {}
-    for _, h in ipairs({ { k = "grp", t = "Group" }, { k = "leader", t = "Leader (score)" }, { k = "slots", t = "T H D" }, { k = "age", t = "Age" } }) do
+    for _, h in ipairs({ { k = "grp", t = "Dungeon" }, { k = "leader", t = "Title (the +key)" }, { k = "slots", t = "T H D" }, { k = "age", t = "Age" } }) do
         local s = child:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall"); s:SetText(h.t)
         self.l_head[h.k] = s
     end
     self.l_empty = fs()
     self.resultRows = {}
-    for i = 1, 18 do
+    for i = 1, 40 do
         local row = CreateFrame("Button", nil, child)
         row:SetSize(childW - 12, 18)
         row.hl = row:CreateTexture(nil, "BACKGROUND"); row.hl:SetAllPoints(); row.hl:SetColorTexture(0.25, 0.55, 0.95, 0.12); row.hl:Hide()
@@ -322,7 +322,7 @@ function UI:Init()
     self.chkGated   = self:MakeCheck("skipGated", "Skip listings I'm rating-gated from")
     self.chkUnknown = self:MakeCheck("includeUnknownKey", "Apply to listings with no readable +key")
     self.chkMinimap = self:MakeCheck("minimapHide", "Hide minimap button", function() UI:UpdateMinimap() end)
-    self.chkOwnSearch = self:MakeCheck("useOwnSearch", "Drive my own search  " .. GREY .. "(else read your Blizzard PGF)" .. R)
+    self.chkOwnSearch = self:MakeCheck("autoRefresh", "Auto-refresh the Group Finder  " .. GREY .. "(re-runs your +19 search for you)" .. R)
     self.clearBlBtn = CreateFrame("Button", nil, child, "UIPanelButtonTemplate")
     self.clearBlBtn:SetSize(140, 20); self.clearBlBtn:SetText("Clear blacklist")
     self.clearBlBtn:SetScript("OnClick", function()
@@ -729,9 +729,9 @@ function UI:RenderQueue()
             self.q_next:SetText(GREEN .. "Next up: " .. R .. "+" .. (pick.keyLevel or "?") .. " " ..
                 (pick.abbr or "?") .. "  " .. (pick.leaderName or "?") .. GREY .. "  -- tap Apply" .. R)
         else
-            self.q_next:SetText(YELLOW .. #matched .. " group(s) found, none with a readable +" ..
-                (c.minKey or 19) .. R .. GREY .. " -- type +" .. (c.minKey or 19) ..
-                " in Blizzard's Group Finder so titles show the key" .. R)
+            self.q_next:SetText(YELLOW .. #matched .. " M+ groups found" .. R .. GREY ..
+                " -- Blizzard hides the +key from addons. Search +" .. (c.minKey or 19) ..
+                " in the Group Finder, tick 'no readable +key' in Settings, or click a row to apply." .. R)
         end
     elseif (nres or 0) > 0 then
         self.q_next:SetText(YELLOW .. "0 / " .. nres .. " listings match" .. R .. GREY .. "  -- " .. friendlyReasons(reasons) .. R)
@@ -765,9 +765,11 @@ function UI:RenderListings()
 
     local keyStr = "+" .. c.minKey .. (c.maxKey ~= c.minKey and ("-" .. c.maxKey) or "")
     self.l_recap:ClearAllPoints(); self.l_recap:SetPoint("TOPLEFT", LX, -y)
-    self.l_recap:SetText(GREY .. "Showing " .. R .. WHITE .. ROLE_DISPLAY[myRole] .. R .. GREY .. " slots in " .. R ..
-        keyStr .. GREY .. " keys you still need  " .. R ..
-        (ns.Search.lastResults and (GREY .. "(" .. #ns.Search.lastResults .. " M+ listings seen)" .. R) or ""))
+    self.l_recap:SetText(GREY .. "Showing " .. R .. WHITE .. ROLE_DISPLAY[myRole] .. R .. GREY ..
+        " slots in dungeons you still need. " .. R .. ORANGE .. "The +key is in each Title" .. R .. GREY ..
+        " -- the addon can't filter on it (Blizzard hides it), so search +" .. c.minKey ..
+        " in the Group Finder. " .. R ..
+        (ns.Search.lastResults and (GREY .. "(" .. #ns.Search.lastResults .. " seen)" .. R) or ""))
     self.l_recap:Show(); y = y + 20
 
     if #matched == 0 then
@@ -797,8 +799,11 @@ function UI:RenderListings()
     for i = 1, n do
         local r = matched[i]
         local row = self.resultRows[i]
-        row.grp:SetText(WHITE .. (r.abbr or "?") .. R .. " +" .. (r.keyLevel or "?"))
-        row.leader:SetText(leaderCell(r))
+        -- A FontString RENDERS the |K..|k token, so the leader's typed title -- including
+        -- the "+19" -- shows here even though the addon can't read it as text. Dungeon goes
+        -- in the group column; leader + score are in the row tooltip.
+        row.grp:SetText(WHITE .. (r.abbr or "?") .. R)
+        row.leader:SetText((r.name and r.name ~= "") and r.name or leaderCell(r))
         row.slots:SetText(slotsCell(r, myRole))
         row.age:SetText(GREY .. fmtAge(r.ageSeconds) .. R)
 
@@ -810,10 +815,20 @@ function UI:RenderListings()
             else row.hl:Hide() end end
 
         row.apply:SetScript("OnClick", function() ns.Queue:ApplyManual(r) end)
-        local canApply = ns.Queue:Eligible(r, c)
+        row:SetScript("OnEnter", function(b)
+            GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
+            GameTooltip:SetText((r.name and r.name ~= "") and r.name or (r.dungeonName or "Mythic+"), 1, 1, 1)
+            GameTooltip:AddLine((r.dungeonName or r.abbr or "?") .. "  -  " .. (r.leaderName or "?") ..
+                ((r.leaderScore and r.leaderScore > 0) and ("  (" .. r.leaderScore .. ")") or ""), 0.8, 0.8, 0.8)
+            if r.leaderBest and r.leaderBest > 0 then
+                GameTooltip:AddLine("Leader's best here: +" .. r.leaderBest .. " (closest signal to the key)", 0.6, 0.85, 0.6)
+            end
+            GameTooltip:Show()
+        end)
+        -- a row Apply is a deliberate manual click -> always enabled (you can see the
+        -- group in Blizzard's UI). Only the automatic one-tap is strict about "+?".
         if invited then row.apply:SetText("Invited"); row.apply:Disable()
         elseif pending then row.apply:SetText("Applied"); row.apply:Disable()
-        elseif not canApply then row.apply:SetText("+? key"); row.apply:Disable()  -- key unknown
         else row.apply:SetText("Apply"); row.apply:Enable() end
 
         row:ClearAllPoints(); row:SetPoint("TOPLEFT", LX + 4, -y)

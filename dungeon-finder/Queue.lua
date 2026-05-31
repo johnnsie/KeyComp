@@ -299,20 +299,18 @@ end
 
 -- a Listings-tab Apply button (real click). Apply() handles the confirm + count.
 function Q:ApplyManual(r)
-    -- the row buttons obey the SAME strict key gate as one-tap -- no blind "+?" applies
-    -- (that's how an off-target key got in). A real click still beats the scripted-apply
-    -- throttle; this only governs WHICH keys are allowed.
-    local ok, why = self:Eligible(r)
-    if not ok then
-        if why == "unknown-key" then
-            self:Note("Skipped " .. (r and r.abbr or "that group") ..
-                " -- its key isn't readable (+?). Enable 'no readable +key' in Settings to apply anyway.")
-        else
-            self:Note("Skipped " .. (r and r.abbr or "that group") .. " +" .. tostring(r and r.keyLevel) ..
-                " -- outside your +" .. ((ns.db and ns.db.targetKey) or 19) .. " range.")
+    -- a row's Apply is a deliberate, manual click -- you can see the group in Blizzard's
+    -- UI, so it applies even when KeyQueue can't read the key ("+?"). The only thing it
+    -- refuses is a key we CAN read that's outside your range (you didn't mean that one).
+    -- The automatic one-tap (Queue:ApplyNext) stays strict; this is the manual override.
+    if r and r.keyLevel then
+        local c = ns.Filter:Criteria()
+        if r.keyLevel < c.minKey or r.keyLevel > c.maxKey then
+            self:Note("Skipped " .. (r.abbr or "that group") .. " +" .. r.keyLevel ..
+                " -- outside your +" .. c.minKey .. (c.maxKey ~= c.minKey and ("-" .. c.maxKey) or "") .. " range")
+            if ns.UI then ns.UI:Refresh() end
+            return false
         end
-        if ns.UI then ns.UI:Refresh() end
-        return false
     end
     local applied = self:Apply(r)
     if ns.UI then ns.UI:Refresh() end
@@ -411,6 +409,6 @@ function Q:Tick()
     end
     -- only run our own search if opted in -- otherwise it overwrites the filter you
     -- set in Blizzard's Group Finder. By default we just read what your PGF shows.
-    if ns.db and ns.db.useOwnSearch then ns.Search:Kick() end
+    if ns.db and ns.db.autoRefresh ~= false then pcall(function() ns.Search:Refresh() end) end
     self:ProcessResults()
 end

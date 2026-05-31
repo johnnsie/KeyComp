@@ -36,6 +36,8 @@ local defaults = {
     minLeaderScore = 0,     -- ignore leaders below this M+ rating (0 = off)
     useOwnSearch   = false, -- drive our own search? OFF = read what YOUR Blizzard
                             -- Group Finder shows (our search overwrites your filter)
+    autoRefresh    = true,  -- auto re-run your Group Finder search every few seconds so you
+                            -- don't keep clicking refresh (preserves your manual +19 filter)
     skipGated      = true,  -- skip listings whose required rating exceeds yours
     includeUnknownKey = false, -- in auto mode, skip listings with no parseable "+N"
     blacklistMins  = 10,    -- how long to skip a leader after they decline you
@@ -57,8 +59,8 @@ local function startTicker()
         if ns.Queue.active then
             pcall(function() ns.Queue:Tick() end)
         elseif uiShown then
-            if ns.db and ns.db.useOwnSearch and (ns.db.tab == "queue" or ns.db.tab == "listings") then
-                ns.Search:Kick()                      -- only if opted in
+            if ns.db and ns.db.autoRefresh ~= false and (ns.db.tab == "queue" or ns.db.tab == "listings") then
+                pcall(function() ns.Search:Refresh() end)  -- re-run your search so it stays fresh
             end
             pcall(function() ns.Search:Read() end)    -- refresh cache from your PGF results
         end

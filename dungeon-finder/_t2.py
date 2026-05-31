@@ -119,6 +119,9 @@ function SendChatMessage(...) SENT.n = SENT.n + 1 end
 function date(fmt) return "12:00:00" end
 function wipe(t) for k in pairs(t) do t[k] = nil end return t end
 SlashCmdList = {}   -- the client always provides this global; the addon indexes into it
+DOSEARCHED = false
+LFGListFrame = { SearchPanel = newStub("searchpanel") }   -- the live Group Finder search panel
+function LFGListSearchPanel_DoSearch(panel) DOSEARCHED = true end  -- re-runs the user's search
 
 -- ----- C_LFGList (search + apply) with rewritable per-scenario data -----
 local LFG = {
@@ -163,6 +166,7 @@ local function setResults(rows)
       leaderName = r.leader, leaderOverallDungeonScore = r.score or 0,
       requiredDungeonScore = r.req or 0, age = r.age or 0,
       numMembers = r.num, isDelisted = r.delisted or false,
+      leaderDungeonScoreInfo = r.best and { bestRunLevel = r.best, mapScore = r.best * 125 } or nil,
     }
     LFG.counts[r.rid] = { TANK = r.members[1], HEALER = r.members[2], DAMAGER = r.members[3] }
   end
@@ -240,7 +244,24 @@ scenario("Core defaults", function()
   eq("db.autoApply default OFF", ns.db.autoApply, false)
   eq("db.autoTargets default ON", ns.db.autoTargets, true)
   eq("db.useOwnSearch default OFF", ns.db.useOwnSearch, false)
+  eq("db.autoRefresh default ON", ns.db.autoRefresh, true)
   eq("Filter:Role -> HEALER (Disc)", Filter:Role(), "HEALER")
+end)
+
+scenario("Search reads leader's best-run level (PGF-style key proxy)", function()
+  setResults({ { rid = 1, aid = 2001, name = "+19 AA", leader = "Tank1", score = 3500, best = 21, age = 30, num = 4, members = { 1, 0, 3 } } })
+  local r = S:Read()[1]
+  eq("leaderBest from leaderDungeonScoreInfo.bestRunLevel", r and r.leaderBest, 21)
+  check("mapScore read too", r and r.mapScore and r.mapScore > 0)
+end)
+
+scenario("Auto-refresh re-runs your Group Finder search", function()
+  eq("autoRefresh default ON", ns.db.autoRefresh, true)
+  DOSEARCHED = false
+  S.lastRefresh = 0
+  local ok = S:Refresh(true)
+  check("Refresh triggered a search", ok == true)
+  check("preferred path re-runs YOUR search (preserves the +19 filter)", DOSEARCHED == true)
 end)
 
 -- -------------------------------- Dungeons -------------------------------
@@ -435,25 +456,33 @@ scenario("Queue ApplyNext is STRICT on unreadable key", function()
   ns.db.includeUnknownKey = false
 end)
 
-scenario("Row-Apply obeys the strict key gate (no blind +? applies)", function()
+scenario("Row-Apply = manual override (allows +?); one-tap stays strict", function()
   resetQueue(); allNeeded()
   ns.db.includeUnknownKey = false
+  -- a real M+ listing whose key we can't read ("+?")
   setResults({ { rid = 8, aid = 2001, name = "LF healer keystone", leader = "L8", age = 5, members = { 1, 0, 3 } } })
   S:Read()
   local r = ns.Search.lastResults[1]
   check("row has unreadable key", r.keyLevel == nil)
-  eq("Eligible false for +? when toggle off", Q:Eligible(r), false)
+  eq("one-tap (Eligible) still refuses +?", Q:Eligible(r), false)
   local ok = Q:ApplyManual(r); RUNTIMERS()
-  check("row-Apply refuses the +? group", ok == false)
-  eq("nothing applied", Q.stats.applied, 0)
-  -- a readable +19 row applies fine on click
+  check("manual row-Apply DOES apply to +? (your call)", ok == true)
+  eq("manual +? applied", Q.stats.applied, 1)
+  -- a readable in-range +19 applies via row too
   resetQueue()
   setResults({ { rid = 1, aid = 2001, name = "+19 AA", leader = "Tank1", age = 30, num = 4, members = { 1, 0, 3 } } })
   S:Read()
-  local r2 = ns.Search.lastResults[1]
-  check("Eligible true for readable +19", Q:Eligible(r2) == true)
-  Q:ApplyManual(r2); RUNTIMERS()
+  Q:ApplyManual(ns.Search.lastResults[1]); RUNTIMERS()
   eq("readable +19 applied via row", Q.stats.applied, 1)
+  -- but a readable key OUTSIDE your range is refused even on a manual click
+  resetQueue()
+  setResults({ { rid = 2, aid = 2002, name = "+12 sky", leader = "L2", age = 5, members = { 1, 0, 2 } } })
+  S:Read()
+  local r3 = ns.Search.lastResults[1]
+  eq("parsed +12", r3.keyLevel, 12)
+  local ok3 = Q:ApplyManual(r3); RUNTIMERS()
+  check("manual refuses readable out-of-range +12", ok3 == false)
+  eq("nothing applied for +12", Q.stats.applied, 0)
 end)
 
 scenario("Queue invite = HOLD (alarm once, no stop, one-tap paused)", function()
