@@ -53,7 +53,7 @@ jobs:
           CF_PROJECT_ID: ${{ secrets.CF_PROJECT_ID }}
         run: |
           python tools/cf_publish.py --zip "${{ steps.zip.outputs.path }}" \
-            --release alpha \
+            --release release \
             --display-name "KeyComp ${GITHUB_REF_NAME#v}" \
             --changelog "Release ${GITHUB_REF_NAME}. See the project page for details."
 

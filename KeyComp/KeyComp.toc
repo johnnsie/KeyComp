@@ -4,7 +4,7 @@
 ## Title: KeyComp
 ## Notes: M+ group utility/dispel coverage optimiser for Disc Priest (Midnight S1)
 ## Author: Lepreconjon
-## Version: 0.1.0
+## Version: 0.1.1
 ## SavedVariables: KeyCompDB
 ## IconTexture: Interface\Icons\Spell_Holy_DispelMagic
 
