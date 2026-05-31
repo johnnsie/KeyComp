@@ -1,0 +1,7 @@
+<Bindings>
+    <!-- Runs in response to the hardware keypress, so the protected ApplyToGroup
+         call inside is allowed (a background timer call is not). -->
+    <Binding name="KEYQUEUE_APPLYNEXT" header="KEYQUEUE">
+        KeyQueueApplyNext()
+    </Binding>
+</Bindings>

@@ -1,0 +1,63 @@
+name: Release KeyComp
+
+# Builds KeyComp and publishes it to CurseForge + a GitHub Release when you push
+# a version tag, e.g.:   git tag -a v0.1.0 -m "Initial release"  &&  git push origin v0.1.0
+#
+# One-time setup on GitHub (repo Settings -> Secrets and variables -> Actions):
+#   CF_API_KEY     your CurseForge upload-API token
+#   CF_PROJECT_ID  the numeric id of the (already-created) CurseForge project
+# Also set Settings -> Actions -> General -> Workflow permissions -> Read and write.
+# If the CF secrets are absent, the CurseForge step is skipped and only the
+# GitHub Release is produced.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write          # needed to create the GitHub Release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify tag matches toc version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          TOC=$(grep -m1 '^## Version:' KeyComp/KeyComp.toc | sed 's/^## Version:[[:space:]]*//' | tr -d '\r')
+          echo "tag=$TAG  toc=$TOC"
+          if [ "$TAG" != "$TOC" ]; then
+            echo "::error::Tag v$TAG does not match KeyComp.toc '## Version: $TOC' — bump the toc and re-tag."
+            exit 1
+          fi
+
+      - name: Build addon zip
+        run: python tools/package_addon.py KeyComp
+
+      - name: Locate built zip
+        id: zip
+        run: echo "path=$(ls dist/KeyComp-*.zip | head -n1)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to CurseForge
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          CF_PROJECT_ID: ${{ secrets.CF_PROJECT_ID }}
+        run: |
+          python tools/cf_publish.py --zip "${{ steps.zip.outputs.path }}" \
+            --release alpha \
+            --display-name "KeyComp ${GITHUB_REF_NAME#v}" \
+            --changelog "Release ${GITHUB_REF_NAME}. See the project page for details."
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" "${{ steps.zip.outputs.path }}" --generate-notes --title "KeyComp ${GITHUB_REF_NAME#v}"

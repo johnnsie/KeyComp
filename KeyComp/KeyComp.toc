@@ -1,0 +1,46 @@
+# KeyComp - Mythic+ group utility coverage for Disc Priest (Midnight S1)
+# Interface for WoW Midnight 12.0.7 (live retail build)
+## Interface: 120007
+## Title: KeyComp
+## Notes: M+ group utility/dispel coverage optimiser for Disc Priest (Midnight S1)
+## Author: Lepreconjon
+## Version: 0.1.0
+## SavedVariables: KeyCompDB
+## IconTexture: Interface\Icons\Spell_Holy_DispelMagic
+
+Capabilities.lua
+Dungeons.lua
+Roster.lua
+Coverage.lua
+Recommend.lua
+Data\WCLData.lua
+Data\WCLData01.lua
+Data\WCLData02.lua
+Data\WCLData03.lua
+Data\WCLData04.lua
+Data\WCLData05.lua
+Data\WCLData06.lua
+Data\WCLData07.lua
+Data\WCLData08.lua
+Data\WCLData09.lua
+Data\WCLData10.lua
+Data\WCLData11.lua
+Data\WCLData12.lua
+Data\WCLData13.lua
+Data\WCLData14.lua
+Data\WCLData15.lua
+Data\WCLData16.lua
+Data\WCLData17.lua
+Data\WCLData18.lua
+Data\WCLData19.lua
+Data\WCLData20.lua
+Data\WCLData21.lua
+Data\WCLData22.lua
+Data\WCLData23.lua
+Data\WCLData24.lua
+WCL.lua
+Applicants.lua
+Core.lua
+UI.lua
+MinimapButton.lua
+Demo.lua

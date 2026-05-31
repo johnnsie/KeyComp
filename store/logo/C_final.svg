@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#171c2a"/>
+      <stop offset="1" stop-color="#070910"/>
+    </linearGradient>
+    <linearGradient id="amber" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd873"/>
+      <stop offset="1" stop-color="#f0920a"/>
+    </linearGradient>
+    <radialGradient id="hexfill" cx="0.5" cy="0.40" r="0.62">
+      <stop offset="0" stop-color="#1b2334"/>
+      <stop offset="1" stop-color="#0a0e17"/>
+    </radialGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect x="6" y="6" width="500" height="500" rx="106" fill="none" stroke="#2b3145" stroke-width="4"/>
+  <!-- Mythic+ keystone -->
+  <polygon points="256,88 384,183 384,329 256,424 128,329 128,183" fill="url(#hexfill)" stroke="url(#amber)" stroke-width="16" stroke-linejoin="round"/>
+  <!-- top rim highlight (gem facet) -->
+  <path d="M134,186 L256,96 L378,186" fill="none" stroke="#ffe7a8" stroke-opacity="0.45" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- coverage pips: red / amber / green -->
+  <g stroke="#0a0d14" stroke-width="3">
+    <circle cx="193" cy="257" r="29" fill="#ff5b5b"/>
+    <circle cx="256" cy="257" r="29" fill="#ffb000"/>
+    <circle cx="319" cy="257" r="29" fill="#33d17f"/>
+  </g>
+  <!-- pip shine -->
+  <g fill="#ffffff" fill-opacity="0.25">
+    <ellipse cx="184" cy="247" rx="9" ry="6"/>
+    <ellipse cx="247" cy="247" rx="9" ry="6"/>
+    <ellipse cx="310" cy="247" rx="9" ry="6"/>
+  </g>
+</svg>

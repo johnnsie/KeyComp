@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#171c2a"/>
+      <stop offset="1" stop-color="#070910"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect x="6" y="6" width="500" height="500" rx="106" fill="none" stroke="#2b3145" stroke-width="4"/>
+  <!-- coverage status strip: red -> amber -> green, rising -->
+  <rect x="128" y="236" width="68" height="166" rx="34" fill="#ff5b5b"/>
+  <rect x="222" y="180" width="68" height="222" rx="34" fill="#ffb000"/>
+  <rect x="316" y="120" width="68" height="282" rx="34" fill="#33d17f"/>
+  <!-- check on the "covered" (green) bar -->
+  <path d="M334,150 l13,15 l25,-32" fill="none" stroke="#06270f" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
