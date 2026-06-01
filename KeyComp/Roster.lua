@@ -29,6 +29,10 @@ local function entry(unit, isPlayer)
 end
 
 function R.Read()
+    -- demo mode (Demo.lua) swaps in a fake 5-man so the panel populates with no
+    -- live group needed.
+    if ns._demoRoster then return ns._demoRoster end
+
     local roster = {}
 
     local me = entry("player", true)

@@ -11,6 +11,21 @@ local _, ns = ...
 local A = {}
 ns.Applicants = A
 
+-- ilvl/score/spec learned from an applicant's sign-up, keyed by normalized name
+-- (sans realm). The Coverage roster reads this so members who JOINED still show
+-- numbers — they leave the applicant list, but we cached them on the way in.
+A.signup = {}
+local function ckey(name)
+    return (name and ((name:match("^[^%-]+")) or name) or ""):lower()
+end
+function A.Remember(name, ilvl, score, spec, class)
+    if not name or name == "" then return end
+    A.signup[ckey(name)] = { ilvl = ilvl, score = score, spec = spec, class = class }
+end
+function A.SignupData(name)
+    return A.signup[ckey(name)]
+end
+
 -- statuses we still show: pending + invited-but-not-yet-joined.
 -- declined/timed-out/cancelled drop off, and once they JOIN they leave the
 -- applicant list entirely (so they disappear on their own).
@@ -68,12 +83,48 @@ end
 -- returns list of { applicantID, members, fills, isGroup, status, priority }
 function A.Read(needs, dungeonKey)
     local out = {}
+    needs = needs or {}
+
+    -- demo mode (Demo.lua): synthesize applicants from ns._demoApplicants (a list
+    -- of applicants, each a list of member tables) and skip the live LFG API.
+    if ns._demoApplicants then
+        for i, dapp in ipairs(ns._demoApplicants) do
+            local members, caps = {}, {}
+            for _, dm in ipairs(dapp) do
+                members[#members + 1] = {
+                    name = dm.name, class = dm.class, role = dm.role,
+                    ilvl = dm.ilvl, score = dm.score, spec = dm.spec,
+                }
+                local conf, pot = ns.Capabilities.Resolve(dm.class, dm.spec, dm.role)
+                for k in pairs(conf) do caps[k] = true end
+                for k in pairs(pot) do caps[k] = true end
+                A.Remember(dm.name, dm.ilvl, dm.score, dm.spec, dm.class)
+            end
+            if #members > 0 then
+                out[#out + 1] = {
+                    applicantID = -i, members = members, isGroup = #members > 1,
+                    status = "applied", invited = false, caps = caps,
+                    priority = A.PriorityScore(members[1], dungeonKey),
+                }
+            end
+        end
+        for _, app in ipairs(out) do
+            local fills = {}
+            for k in pairs(needs) do if app.caps[k] then fills[#fills + 1] = k end end
+            app.fills = fills
+        end
+        table.sort(out, function(a, b)
+            if #a.fills ~= #b.fills then return #a.fills > #b.fills end
+            return (a.priority or 0) > (b.priority or 0)
+        end)
+        return out
+    end
+
     if not (C_LFGList and C_LFGList.GetApplicants and C_LFGList.GetApplicantMemberInfo) then
         return out
     end
     local ids = C_LFGList.GetApplicants()
     if not ids then return out end
-    needs = needs or {}
 
     -- pass 1: read applicants + their combined capability set
     for _, appID in ipairs(ids) do
@@ -93,20 +144,39 @@ function A.Read(needs, dungeonKey)
         if status == nil or VISIBLE_STATUS[status] then
             local members, caps = {}, {}
             for i = 1, 5 do
-                local name, classFile, locClass, level, itemLevel, honorLevel,
-                      tank, healer, damage, assignedRole, relationship, dungeonScore =
-                      C_LFGList.GetApplicantMemberInfo(appID, i)
+                -- full return tuple (specID was added at slot 16 in 10.2.0; index
+                -- by position rather than a long name-list so holes/nils are safe)
+                local info = { C_LFGList.GetApplicantMemberInfo(appID, i) }
+                local name = info[1]
                 if not name then break end
+                local classFile   = info[2]
+                local itemLevel   = info[5]
+                local tank, healer, damage = info[7], info[8], info[9]
+                local assignedRole = info[10]
+                local relationship = info[11]
+                local dungeonScore = info[12]
+                local specID       = info[16]
                 local role = roleFrom(assignedRole, tank, healer, damage)
+                -- spec straight from the group-finder applicant data (resolve the
+                -- specID to its name); WCL is only a fallback for pre-10.2 clients.
+                local specName
+                if specID and specID > 0 and GetSpecializationInfoByID then
+                    local _, sname = GetSpecializationInfoByID(specID)
+                    specName = sname
+                end
+                if not specName then
+                    local wrec = (ns.WCL and ns.WCL:IsLoaded()) and ns.WCL:Lookup(name) or nil
+                    specName = wrec and wrec.sp
+                end
                 members[#members + 1] = {
                     name = name, class = classFile, role = role,
                     ilvl = itemLevel, score = dungeonScore,
+                    spec = specName, relationship = relationship,
                 }
-                -- role-based capability (applicant spec isn't reliably exposed;
-                -- role disambiguates the spec-sensitive case, i.e. healer Magic)
-                local conf, pot = ns.Capabilities.Resolve(classFile, nil, role)
+                local conf, pot = ns.Capabilities.Resolve(classFile, specName, role)
                 for k in pairs(conf) do caps[k] = true end
                 for k in pairs(pot) do caps[k] = true end
+                A.Remember(name, itemLevel, dungeonScore, specName, classFile)
             end
             if #members > 0 then
                 out[#out + 1] = {

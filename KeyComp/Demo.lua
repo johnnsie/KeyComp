@@ -10,36 +10,44 @@ local ADDON, KC = ...
 -- story for the Coverage strip.
 local function demoRoster()
     return {
-        { name = "Yourpriest", class = "PRIEST",  role = "HEALER",  isPlayer = true  },
-        { name = "Tankzilla",  class = "WARRIOR", role = "TANK",    isPlayer = false },
-        { name = "Arcanee",    class = "MAGE",    role = "DAMAGER", isPlayer = false },
-        { name = "Stabby",     class = "ROGUE",   role = "DAMAGER", isPlayer = false },
-        { name = "Moonfang",   class = "DRUID",   role = "DAMAGER", isPlayer = false },
+        { name = "Yourpriest", class = "PRIEST",  spec = "Discipline",    role = "HEALER",  isPlayer = true,  ilvl = 642, score = 3120 },
+        { name = "Tankzilla",  class = "WARRIOR", spec = "Protection",    role = "TANK",    isPlayer = false, ilvl = 645, score = 2950 },
+        { name = "Arcanee",    class = "MAGE",    spec = "Frost",         role = "DAMAGER", isPlayer = false, ilvl = 641, score = 3010 },
+        { name = "Stabby",     class = "ROGUE",   spec = "Assassination", role = "DAMAGER", isPlayer = false, ilvl = 638, score = 2880 },
+        { name = "Moonfang",   class = "DRUID",   spec = "Balance",       role = "DAMAGER", isPlayer = false, ilvl = 640, score = 2900 },
     }
 end
 
-local function app(name, class, role, score, ilvl, key)
-    return { name = name, class = class, role = role, appID = -1,
-             score = score, ilvl = ilvl, bestKey = key }
+local function m(name, class, spec, role, score, ilvl, key)
+    return { name = name, class = class, spec = spec, role = role, score = score, ilvl = ilvl, bestKey = key }
 end
 
--- A believable applicant pool: several classes, varied M+ score / ilvl / key so
--- the ranking + top-N-per-class collapse are visible.
+-- A believable applicant pool. Each entry is one APPLICANT = a list of members;
+-- entries with >1 member are premades that apply together (one Invite takes the
+-- whole group) and render nested. Hunter/Mage are stacked so the "+N more"
+-- expander is exercised too.
 local function demoApplicants()
     return {
         -- tanks
-        app("Borkdk",     "DEATHKNIGHT", "TANK",    2890, 641, 13),
-        app("Shieldwall", "WARRIOR",     "TANK",    2710, 639, 11),
-        -- dps
-        app("Pewpewlol",  "HUNTER",      "DAMAGER", 3120, 642, 14),
-        app("Legholas",   "HUNTER",      "DAMAGER", 2955, 640, 12),
-        app("Quickshot",  "HUNTER",      "DAMAGER", 2680, 638, 10),
-        app("Frostbyte",  "MAGE",        "DAMAGER", 3015, 641, 13),
-        app("Pyroclast",  "MAGE",        "DAMAGER", 2840, 639, 11),
-        app("Draganos",   "EVOKER",      "DAMAGER", 3080, 642, 14),
-        app("Backstabz",  "ROGUE",       "DAMAGER", 2900, 640, 12),
+        { m("Borkdk",     "DEATHKNIGHT", "Blood",        "TANK",    2890, 641, 13) },
+        { m("Shieldwall", "WARRIOR",     "Protection",   "TANK",    2710, 639, 11) },
+        -- a DPS + healer duo applying together (premade of 2)
+        { m("Frostbyte",  "MAGE",        "Frost",        "DAMAGER", 3015, 641, 13),
+          m("Bandaid",    "PRIEST",      "Holy",         "HEALER",  2980, 640, 12) },
+        -- hunters stacked (3) -> "+2 more" expander on the Hunter row
+        { m("Pewpewlol",  "HUNTER",      "Marksmanship", "DAMAGER", 3120, 642, 14) },
+        { m("Legholas",   "HUNTER",      "Beast Mastery","DAMAGER", 2955, 640, 12) },
+        { m("Quickshot",  "HUNTER",      "Survival",     "DAMAGER", 2680, 638, 10) },
+        -- more dps (Pyroclast is a 2nd Mage -> Mage row gets "+1 more")
+        { m("Pyroclast",  "MAGE",        "Fire",         "DAMAGER", 2840, 639, 11) },
+        { m("Draganos",   "EVOKER",      "Devastation",  "DAMAGER", 3080, 642, 14) },
+        { m("Backstabz",  "ROGUE",       "Assassination","DAMAGER", 2900, 640, 12) },
+        -- a 3-stack premade applying together
+        { m("Trinity",    "WARLOCK",     "Affliction",   "DAMAGER", 2870, 639, 11),
+          m("Trinitwo",   "DEMONHUNTER", "Havoc",        "DAMAGER", 2810, 638, 10),
+          m("Trinithree", "SHAMAN",      "Elemental",    "DAMAGER", 2790, 637, 10) },
         -- healer
-        app("Holymoly",   "PALADIN",     "HEALER",  2960, 641, 13),
+        { m("Holymoly",   "PALADIN",     "Holy",         "HEALER",  2960, 641, 13) },
     }
 end
 

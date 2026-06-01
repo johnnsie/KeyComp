@@ -12,6 +12,7 @@ local addonName, ns = ...
 local UI = {}
 ns.UI = UI
 UI.invitedLocal = {}  -- applicantIDs we've clicked Invite on this session (optimistic)
+UI.expandedClasses = {}  -- {["DAMAGER:MAGE"]=true} class groups expanded to show every applicant
 
 local C = ns.Coverage
 
@@ -20,6 +21,7 @@ local WIDTH = 470
 local CONTENT_TOP = 118
 local MAX_VIS = 380
 local LX = 6
+local APPL_MAX_ROWS = 40  -- pooled rows on the Applicants tab (leaders + nested members)
 
 local GREEN  = "|cff40ff40"
 local YELLOW = "|cffffd200"
@@ -27,6 +29,7 @@ local RED    = "|cffff5555"
 local GREY   = "|cff999999"
 local WHITE  = "|cffffffff"
 local WCLC   = "|cffb389ff"  -- WCL purple (M+ DPS data)
+local MEDAL_CODE = { g = "|cffffd100", s = "|cffc7c7cf", b = "|cffcd7f32" }  -- WCL gold/silver/bronze
 local R      = "|r"
 
 local STATUS = {
@@ -121,6 +124,20 @@ local function classIconInline(classFile, size)
         s, s, c[1] * 256, c[2] * 256, c[3] * 256, c[4] * 256)
 end
 
+-- inline tank/healer/dps role icon (texcoords into the LFG role-portrait sheet).
+local ROLE_TC = {
+    TANK    = { 0, 19, 22, 41 },
+    HEALER  = { 20, 39, 1, 20 },
+    DAMAGER = { 20, 39, 22, 41 },
+}
+local function roleIconInline(role, size)
+    local c = ROLE_TC[role]
+    if not c then return "" end
+    local s = size or 13
+    return string.format("|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:%d:%d:0:0:64:64:%d:%d:%d:%d|t ",
+        s, s, c[1], c[2], c[3], c[4])
+end
+
 -- applicant table column geometry: x offset within a row + width. The row button
 -- is anchored at LX+4, so a column's child-space x is LX + 4 + APPLCOLS[c].x.
 local APPLCOLS = {
@@ -140,6 +157,33 @@ local function fillIconsInline(fills)
     return table.concat(t, " ")
 end
 
+-- "|cAARRGGBB" color escape for an M+ rating, using the game's own rarity ramp.
+local function scoreColorCode(score)
+    if score and score > 0 and C_ChallengeMode and C_ChallengeMode.GetDungeonScoreRarityColor then
+        local c = C_ChallengeMode.GetDungeonScoreRarityColor(score)
+        if c and c.GenerateHexColor then return "|c" .. c:GenerateHexColor() end
+    end
+    return GREY
+end
+
+-- item level tiered color: high = uncommon green, solid = white, low = grey.
+-- thresholds tuned for Midnight S1 gear (~600-660).
+local function ilvlColorCode(ilvl)
+    if not ilvl or ilvl <= 0 then return GREY end
+    if ilvl >= 645 then return "|cff1eff00"
+    elseif ilvl >= 635 then return WHITE
+    else return GREY end
+end
+
+-- rarity color as r,g,b components (for tooltip AddLine, which wants components).
+local function scoreRGB(score)
+    if score and score > 0 and C_ChallengeMode and C_ChallengeMode.GetDungeonScoreRarityColor then
+        local c = C_ChallengeMode.GetDungeonScoreRarityColor(score)
+        if c then return c.r, c.g, c.b end
+    end
+    return 0.85, 0.85, 0.85
+end
+
 local function hideTip() GameTooltip:Hide() end
 
 -- ---------------------------------------------------------------- build ----
@@ -147,7 +191,6 @@ function UI:Init()
     if self.frame then return end
     if ns.db and not ns.db.tab then ns.db.tab = "coverage" end
     if ns.db and ns.db.scale == nil then ns.db.scale = 1 end
-    if ns.db and ns.db.perClass == nil then ns.db.perClass = 3 end
 
     local f = CreateFrame("Frame", "KeyCompFrame", UIParent, "BackdropTemplate")
     self.frame = f
@@ -259,7 +302,6 @@ function UI:Init()
     self.tabs = {
         makeTab("coverage", "Coverage", PAD),
         makeTab("applicants", "Applicants", PAD + 100),
-        makeTab("info", "Info", PAD + 200),
     }
     local div = f:CreateTexture(nil, "ARTWORK")
     div:SetColorTexture(0.3, 0.3, 0.35, 0.8)
@@ -326,9 +368,42 @@ function UI:Init()
         cell:SetScript("OnLeave", hideTip)
         self.cells[i] = cell
     end
+    -- utility cells (kick / lust / battle rez): same look as the ability cells,
+    -- pinned to the right end of the strip.
+    self.utilCells = {}
+    for i = 1, 3 do
+        local cell = CreateFrame("Button", nil, child)
+        cell:SetSize(38, 38)
+        cell.bg = cell:CreateTexture(nil, "BACKGROUND")
+        cell.bg:SetAllPoints()
+        cell.icon = cell:CreateTexture(nil, "ARTWORK")
+        cell.icon:SetPoint("TOPLEFT", 2, -2)
+        cell.icon:SetPoint("BOTTOMRIGHT", -2, 2)
+        cell.label = child:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        cell.label:SetPoint("TOP", cell, "BOTTOM", 0, -2)
+        cell:SetScript("OnLeave", hideTip)
+        self.utilCells[i] = cell
+    end
+    -- role-composition recap icons (ideal 1 tank / 1 heal / 3 dps; lit = filled)
+    self.roleSlots = {}
+    for i = 1, 5 do
+        local t = child:CreateTexture(nil, "ARTWORK")
+        t:SetSize(20, 20)
+        t:SetTexture("Interface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES")
+        t:Hide()
+        self.roleSlots[i] = t
+    end
     self.h_group = fs("GameFontNormal")
     self.memberBtns = {}
-    for i = 1, 5 do self.memberBtns[i] = rowButton(FSW, 15) end
+    for i = 1, 5 do
+        local b = rowButton(FSW, 15)
+        b.score = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        b.score:SetPoint("RIGHT", b, "RIGHT", 0, 0); b.score:SetWidth(52); b.score:SetJustifyH("RIGHT")
+        b.ilvl = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        b.ilvl:SetPoint("RIGHT", b, "RIGHT", -60, 0); b.ilvl:SetWidth(40); b.ilvl:SetJustifyH("RIGHT")
+        b.text:SetWidth(FSW - 112); b.text:SetWordWrap(false)
+        self.memberBtns[i] = b
+    end
     self.utilText = fs()
     self.gapsText = fs()
     self.buffsText = fs()
@@ -356,13 +431,17 @@ function UI:Init()
         self.applBoxes[i] = box
     end
     self.applBtns = {}
-    for i = 1, 24 do
+    for i = 1, APPL_MAX_ROWS do
         local row = CreateFrame("Button", nil, child)
         row:SetSize(childW - 16, 18)
         row.hl = row:CreateTexture(nil, "BACKGROUND")
         row.hl:SetAllPoints()
         row.hl:SetColorTexture(0.20, 0.70, 0.25, 0.18)
         row.hl:Hide()
+        row.hover = row:CreateTexture(nil, "BACKGROUND", nil, 1)
+        row.hover:SetAllPoints()
+        row.hover:SetColorTexture(1, 1, 1, 0.07)
+        row.hover:Hide()
         local function col(x, w, justify)
             local s = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             s:SetPoint("LEFT", x, 0)
@@ -377,7 +456,7 @@ function UI:Init()
         row.ilvl  = col(APPLCOLS.ilvl.x,  APPLCOLS.ilvl.w, "RIGHT")
         row.wcl   = col(APPLCOLS.wcl.x,   APPLCOLS.wcl.w, "RIGHT")
         row.icons = col(APPLCOLS.icons.x, APPLCOLS.icons.w)
-        row:SetScript("OnLeave", hideTip)
+        row:SetScript("OnLeave", function(self2) hideTip(); if self2.hover then self2.hover:Hide() end end)
 
         row.invite = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
         row.invite:SetSize(56, 18)
@@ -392,6 +471,25 @@ function UI:Init()
         row.decline:SetNormalFontObject(GameFontNormalSmall)
 
         self.applBtns[i] = row
+    end
+
+    -- thin divider under the Applicants header
+    self.applDivider = child:CreateTexture(nil, "ARTWORK")
+    self.applDivider:SetColorTexture(0.3, 0.3, 0.35, 0.6)
+    self.applDivider:SetHeight(1)
+    self.applDivider:Hide()
+
+    -- per-class "+N more / show fewer" expander toggles
+    self.applExpanders = {}
+    for i = 1, 12 do
+        local e = CreateFrame("Button", nil, child)
+        e:SetSize(150, 16)
+        e.fs = e:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        e.fs:SetPoint("LEFT", 0, 0)
+        e.fs:SetJustifyH("LEFT")
+        e:SetScript("OnLeave", hideTip)
+        e:Hide()
+        self.applExpanders[i] = e
     end
 
     -- applicant column headers (drawn once above the list)
@@ -446,34 +544,6 @@ function UI:Init()
     end)
     self.scaleSlider = slider
 
-    -- applicants-per-class control (Info tab)
-    self.perClassLabel = child:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    self.perClassLabel:SetJustifyH("LEFT")
-    local pcSlider = CreateFrame("Slider", nil, child)
-    pcSlider:SetOrientation("HORIZONTAL")
-    pcSlider:SetSize(180, 16)
-    pcSlider:SetMinMaxValues(1, 5)
-    pcSlider:SetValueStep(1)
-    if pcSlider.SetObeyStepOnDrag then pcSlider:SetObeyStepOnDrag(true) end
-    pcSlider:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Horizontal")
-    local pcThumb = pcSlider:GetThumbTexture()
-    if pcThumb then pcThumb:SetSize(14, 18) end
-    local pcTrack = pcSlider:CreateTexture(nil, "BACKGROUND")
-    pcTrack:SetColorTexture(0.3, 0.3, 0.3, 0.8)
-    pcTrack:SetHeight(4)
-    pcTrack:SetPoint("LEFT", 2, 0)
-    pcTrack:SetPoint("RIGHT", -2, 0)
-    pcSlider:SetScript("OnValueChanged", function(_, val)
-        val = math.floor(val + 0.5)
-        if val < 1 then val = 1 elseif val > 5 then val = 5 end
-        if UI.perClassLabel then UI.perClassLabel:SetText("Applicants per class: " .. val) end
-        if val ~= ns.db.perClass then
-            ns.db.perClass = val
-            if UI.frame and UI.frame:IsShown() then UI:Refresh() end
-        end
-    end)
-    self.perClassSlider = pcSlider
-
     -- info-tab ability checklist rows
     self.infoRows = {}
     for i = 1, 16 do
@@ -483,6 +553,18 @@ function UI:Init()
         s:SetWordWrap(false)
         self.infoRows[i] = s
     end
+
+    -- "Advanced" disclosure toggle on the Coverage tab (folds in the old Info tab)
+    self.advBtn = CreateFrame("Button", nil, child)
+    self.advBtn:SetSize(childW - 2 * LX, 18)
+    self.advBtn.fs = self.advBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    self.advBtn.fs:SetPoint("LEFT", 0, 0)
+    self.advBtn.fs:SetJustifyH("LEFT")
+    self.advBtn:SetScript("OnClick", function()
+        ns.db.advCoverage = (not ns.db.advCoverage) or nil
+        UI:Refresh()
+    end)
+    self.advBtn:Hide()
 
     self:UpdateTabs()
 end
@@ -659,21 +741,24 @@ end
 
 function UI:HideAllTabs()
     for i = 1, 7 do self.cells[i]:Hide(); self.cells[i].label:Hide() end
+    if self.utilCells then for i = 1, 3 do self.utilCells[i]:Hide(); self.utilCells[i].label:Hide() end end
+    if self.roleSlots then for i = 1, 5 do self.roleSlots[i]:Hide() end end
     self.h_group:Hide()
     for i = 1, 5 do self.memberBtns[i]:Hide() end
     self.utilText:Hide(); self.gapsText:Hide()
     if self.buffsText then self.buffsText:Hide() end
     self.h_appl:Hide(); self.applEmpty:Hide()
-    for i = 1, 24 do self.applBtns[i]:Hide() end
+    for i = 1, APPL_MAX_ROWS do self.applBtns[i]:Hide() end
     if self.applHead then for _, h in pairs(self.applHead) do h:Hide() end end
     for i = 1, 3 do self.applSecHeaders[i]:Hide(); self.applBoxes[i]:Hide() end
+    if self.applDivider then self.applDivider:Hide() end
+    if self.applExpanders then for _, e in ipairs(self.applExpanders) do e:Hide() end end
     self.infoPrio:Hide(); self.infoNote:Hide(); self.infoCover:Hide()
     self.infoNeed:Hide(); self.infoKey:Hide()
     if self.scaleSlider then self.scaleSlider:Hide() end
     if self.scaleLabel then self.scaleLabel:Hide() end
-    if self.perClassSlider then self.perClassSlider:Hide() end
-    if self.perClassLabel then self.perClassLabel:Hide() end
     if self.infoRows then for i = 1, 16 do self.infoRows[i]:Hide() end end
+    if self.advBtn then self.advBtn:Hide() end
 end
 
 -- --------------------------------------------------------------- tooltips --
@@ -692,6 +777,20 @@ function UI:CoverageTip(owner, t, info, dungeon)
         GameTooltip:AddLine("Bring: " .. (ns.Recommend.providerText[t] or "?"), 0.8, 0.8, 0.8, true)
     end
     if info.required then GameTooltip:AddLine("Required for " .. dungeon.name, 0.7, 0.7, 0.7, true) end
+    GameTooltip:Show()
+end
+
+function UI:UtilTip(owner, d)
+    GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+    GameTooltip:SetText(C.LABELS[d.key] or d.label, 1, 1, 1)
+    local sc = STATUS[d.status]
+    local txt = (d.status == "covered" and "Covered") or (d.status == "maybe" and "Partial") or "MISSING"
+    if d.key == "shortkick" then
+        txt = d.n .. " short kick" .. (d.n == 1 and "" or "s") .. "  (want 2)"
+    end
+    GameTooltip:AddLine(txt, sc[1], sc[2], sc[3])
+    if d.by and #d.by > 0 then GameTooltip:AddLine("By: " .. plainNames(d.by), 0.6, 0.9, 0.6, true) end
+    if d.maybeBy and #d.maybeBy > 0 then GameTooltip:AddLine("Maybe: " .. plainNames(d.maybeBy), 0.9, 0.8, 0.3, true) end
     GameTooltip:Show()
 end
 
@@ -752,7 +851,7 @@ local function wclBreakdown(rec, selectedKey)
     end
 end
 
-function UI:ApplicantTip(owner, app, extras)
+function UI:ApplicantTip(owner, app)
     GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
     GameTooltip:SetText(app.isGroup and "Applicant GROUP" or "Applicant", 1, 1, 1)
     if app.isGroup then
@@ -760,11 +859,21 @@ function UI:ApplicantTip(owner, app, extras)
     end
     for _, m in ipairs(app.members) do
         GameTooltip:AddLine(" ")
-        GameTooltip:AddLine((m.name or "?") .. "  " .. (ROLE_DISPLAY[m.role] or m.role or "?"), classColorRGB(m.class))
-        local bits = {}
-        if m.ilvl and m.ilvl > 0 then bits[#bits + 1] = "ilvl " .. math.floor(m.ilvl) end
-        if m.score and m.score > 0 then bits[#bits + 1] = "M+ " .. m.score end
-        if #bits > 0 then GameTooltip:AddLine(table.concat(bits, "   "), 0.8, 0.8, 0.8) end
+        GameTooltip:AddLine((m.name or "?"), classColorRGB(m.class))
+        -- spec + role line (spec is only present where the API/demo supplies it)
+        local sr = {}
+        if m.spec and m.spec ~= "" then sr[#sr + 1] = m.spec end
+        sr[#sr + 1] = (ROLE_DISPLAY[m.role] or m.role or "?")
+        GameTooltip:AddLine(classColored(m.class) .. GREY .. "  \194\183  " .. table.concat(sr, " \194\183 ") .. R, 0.7, 0.7, 0.7)
+        local il = (m.ilvl and m.ilvl > 0) and ("ilvl " .. math.floor(m.ilvl)) or ""
+        local mp = (m.score and m.score > 0) and ("M+ " .. m.score) or ""
+        if il ~= "" or mp ~= "" then
+            local r, g, bcol = scoreRGB(m.score)
+            GameTooltip:AddDoubleLine(il, mp, 0.85, 0.85, 0.85, r, g, bcol)
+        end
+        if m.relationship and m.relationship ~= "" then
+            GameTooltip:AddLine("note: " .. m.relationship, 0.45, 0.8, 0.45, true)
+        end
         if ns.WCL and ns.WCL:IsLoaded() then
             local rec = ns.WCL:Lookup(m.name)
             if rec then
@@ -787,17 +896,6 @@ function UI:ApplicantTip(owner, app, extras)
         GameTooltip:AddLine("Fills gaps: " .. table.concat(labels, ", "), 0.6, 0.9, 0.6, true)
     else
         GameTooltip:AddLine("Fills no current gaps", 0.7, 0.7, 0.7)
-    end
-    if extras and #extras > 0 then
-        GameTooltip:AddLine(" ")
-        GameTooltip:AddLine(#extras .. " more of this class (not shown):", 0.75, 0.75, 0.75)
-        for _, e in ipairs(extras) do
-            local em = e.members[1]
-            local r, g, bcol = classColorRGB(em.class)
-            local s = (em.score and em.score > 0) and ("  M+ " .. em.score) or ""
-            local il = (em.ilvl and em.ilvl > 0) and ("  " .. math.floor(em.ilvl) .. "i") or ""
-            GameTooltip:AddLine("  " .. (em.name or "?") .. s .. il, r, g, bcol)
-        end
     end
     if ns.WCL and ns.WCL:IsLoaded() then
         GameTooltip:AddLine(" ")
@@ -880,6 +978,36 @@ function UI:RenderStrip(y)
             cell:Hide(); cell.label:Hide()
         end
     end
+
+    -- utility cells, right-aligned: kicks (count -> green/yellow/red), lust, rez.
+    local u = cov.utility
+    local kick = #u.kick.conf
+    local udef = {
+        { key = "shortkick", label = "Kick", icon = FILL_ICON.shortkick,
+          status = (kick >= 2 and "covered") or (kick == 1 and "maybe") or "missing",
+          n = kick, by = u.kick.conf, maybeBy = u.kick.maybe },
+        { key = "lust", label = "Lust", icon = FILL_ICON.lust,
+          status = (#u.lust.conf > 0 and "covered") or "missing",
+          n = #u.lust.conf, by = u.lust.conf, maybeBy = u.lust.maybe },
+        { key = "battlerez", label = "Rez", icon = FILL_ICON.battlerez,
+          status = (#u.battlerez.conf > 0 and "covered") or "missing",
+          n = #u.battlerez.conf, by = u.battlerez.conf, maybeBy = u.battlerez.maybe },
+    }
+    local ux = self.childW - LX - 38 - 2 * 44  -- leftmost of the 3 right-aligned cells
+    for j = 1, 3 do
+        local d = udef[j]
+        local cell = self.utilCells[j]
+        local col = STATUS[d.status]
+        cell:ClearAllPoints()
+        cell:SetPoint("TOPLEFT", ux + (j - 1) * 44, -y)
+        cell.bg:SetColorTexture(col[1], col[2], col[3], 0.95)
+        cell.icon:SetTexture(d.icon)
+        cell.icon:SetDesaturated(d.status == "missing")
+        cell.label:SetText(d.key == "shortkick" and (d.label .. " " .. d.n) or d.label)
+        cell.label:SetTextColor(col[1] + 0.25, col[2] + 0.25, col[3] + 0.25)
+        cell:SetScript("OnEnter", function(b) UI:UtilTip(b, d) end)
+        cell:Show(); cell.label:Show()
+    end
     return y + 38 + 18
 end
 
@@ -922,23 +1050,62 @@ function UI:RenderUtilGapsBuffs(y)
     return y
 end
 
+-- minimalist quick recap: ability strip (red = gap) + big utility + the group
+-- roster, with everything detailed folded behind the Advanced toggle.
 function UI:RenderCoverage()
     local cov, roster = self.cov, self.roster
     local y = 4
     y = self:RenderStrip(y)
 
-    self.h_group:ClearAllPoints(); self.h_group:SetPoint("TOPLEFT", LX, -y)
-    self.h_group:SetText(WHITE .. "Group (" .. #roster .. "/5)" .. R .. "  " .. GREY .. "hover a name" .. R)
-    self.h_group:Show(); y = y + 18
+    -- role-composition recap (icons): ideal 1 tank / 1 heal / 3 dps, lit = filled
+    local nTank, nHeal, nDps = 0, 0, 0
+    for _, e in ipairs(cov.resolved) do
+        local role = e.m.role
+        if role == "TANK" then nTank = nTank + 1
+        elseif role == "HEALER" then nHeal = nHeal + 1
+        elseif role == "DAMAGER" then nDps = nDps + 1 end
+    end
+    local slots = { "TANK", "HEALER", "DAMAGER", "DAMAGER", "DAMAGER" }
+    local fillBy = { TANK = nTank, HEALER = nHeal, DAMAGER = nDps }
+    local usedBy = { TANK = 0, HEALER = 0, DAMAGER = 0 }
+    local sx = LX
+    for i = 1, 5 do
+        local role = slots[i]
+        local tex = self.roleSlots[i]
+        local c = ROLE_TC[role]
+        tex:SetTexCoord(c[1] / 64, c[2] / 64, c[3] / 64, c[4] / 64)
+        usedBy[role] = usedBy[role] + 1
+        local filled = usedBy[role] <= fillBy[role]
+        tex:SetDesaturated(not filled)
+        tex:SetAlpha(filled and 1 or 0.3)
+        tex:ClearAllPoints(); tex:SetPoint("TOPLEFT", sx, -y)
+        tex:Show()
+        sx = sx + 24
+    end
+    y = y + 26
     for i = 1, 5 do
         local b = self.memberBtns[i]
         local entry = cov.resolved[i]
         if entry then
             local m = entry.m
-            local meta = {}
-            if m.spec then meta[#meta + 1] = m.spec end
-            if m.role and ROLE_DISPLAY[m.role] then meta[#meta + 1] = ROLE_DISPLAY[m.role] end
-            b.text:SetText(ccName(m) .. (#meta > 0 and ("   " .. GREY .. table.concat(meta, " \194\183 ") .. R) or ""))
+            -- ilvl / score / spec: you = live APIs; party = what we cached when they
+            -- applied (the game won't hand it over once they've joined), else a
+            -- roster-supplied value (demo).
+            local ilvl, score, spec
+            if m.isPlayer then
+                local _, eq = GetAverageItemLevel()
+                ilvl = eq
+                score = C_ChallengeMode and C_ChallengeMode.GetOverallDungeonScore and C_ChallengeMode.GetOverallDungeonScore()
+                spec = m.spec
+            else
+                local sd = ns.Applicants and ns.Applicants.SignupData and ns.Applicants.SignupData(m.name)
+                ilvl = m.ilvl or (sd and sd.ilvl)
+                score = m.score or (sd and sd.score)
+                spec = m.spec or (sd and sd.spec)
+            end
+            b.text:SetText(ccName(m) .. (spec and ("   " .. GREY .. spec .. R) or ""))
+            b.ilvl:SetText((ilvl and ilvl > 0) and (ilvlColorCode(ilvl) .. math.floor(ilvl + 0.5) .. R) or "")
+            b.score:SetText((score and score > 0) and (scoreColorCode(score) .. score .. R) or "")
             b:ClearAllPoints(); b:SetPoint("TOPLEFT", LX, -y)
             b:SetScript("OnEnter", function(btn) UI:MemberTip(btn, entry) end)
             b:Show(); y = y + 15
@@ -948,7 +1115,26 @@ function UI:RenderCoverage()
     end
     y = y + 8
 
-    y = self:RenderUtilGapsBuffs(y)
+    -- divider
+    self.applDivider:ClearAllPoints()
+    self.applDivider:SetPoint("TOPLEFT", LX, -y + 3)
+    self.applDivider:SetPoint("TOPRIGHT", self.child, "TOPLEFT", self.childW - LX, -y + 3)
+    self.applDivider:Show()
+    y = y + 10
+
+    -- Advanced disclosure (folds in the old Info tab: who-covers-each-cast, notes,
+    -- missing buffs, scale)
+    local open = ns.db.advCoverage
+    local plus  = "|TInterface\\Buttons\\UI-PlusButton-Up:14:14:0:0|t"
+    local minus = "|TInterface\\Buttons\\UI-MinusButton-Up:14:14:0:0|t"
+    self.advBtn.fs:SetText((open and minus or plus) .. " " .. WHITE .. "Advanced" .. R
+        .. "  " .. GREY .. "who covers each cast \194\183 notes \194\183 buffs" .. R)
+    self.advBtn:ClearAllPoints(); self.advBtn:SetPoint("TOPLEFT", LX, -y)
+    self.advBtn:Show(); y = y + 22
+
+    if open then
+        y = self:RenderAdvanced(y)
+    end
     return y
 end
 
@@ -960,13 +1146,15 @@ local function wclCell(m, dungeonKey)
     if not rec then return "" end
     -- "+key dps" for the selected dungeon (purple) = highest key they've logged in
     -- it + the dps from that run; else their best "+key dps" any dungeon (grey).
+    -- "+key dps": the +key keeps its context color (purple = selected dungeon,
+    -- grey = best elsewhere); the dps number is tinted by WCL medal band.
     local stat = ns.WCL:DungeonStat(rec, dungeonKey)
     if stat and stat.dps and stat.dps > 0 then
-        return WCLC .. "+" .. (stat.k or 0) .. " " .. ns.WCL.FmtDps(stat.dps) .. R
+        return WCLC .. "+" .. (stat.k or 0) .. " " .. R .. (MEDAL_CODE[stat.md] or WCLC) .. ns.WCL.FmtDps(stat.dps) .. R
     end
     local best = ns.WCL:BestEntry(rec)
     if best and best.dps and best.dps > 0 then
-        return GREY .. "+" .. (best.k or 0) .. " " .. ns.WCL.FmtDps(best.dps) .. R
+        return GREY .. "+" .. (best.k or 0) .. " " .. R .. (MEDAL_CODE[best.md] or GREY) .. ns.WCL.FmtDps(best.dps) .. R
     end
     if rec.bk and rec.bk > 0 then
         return GREY .. "+" .. rec.bk .. R
@@ -974,34 +1162,31 @@ local function wclCell(m, dungeonKey)
     return ""
 end
 
--- one compact applicant row. primary = class's first choice (icon + fill icons);
--- alternates are indented and lighter. invited rows disable the Invite button.
-function UI:SetupApplicantRow(b, app, primary, extras, y)
+-- one compact applicant row. primary = the class's top pick (full class icon);
+-- alternates (shown only when the class is expanded) get a small indent + icon.
+-- invited rows disable the Invite button. Returns the next y.
+function UI:SetupApplicantRow(b, app, primary, y)
     local m = app.members[1]
     local appID = app.applicantID
     local invited = app.invited or (UI.invitedLocal and UI.invitedLocal[appID]) or false
 
-    -- compact badge after the name: group size (orange "G{n}") or, on the lead
-    -- row, "+N" (blue) = N more applicants of this class not shown.
-    local badge = ""
-    if app.isGroup then
-        badge = "  |cffffa020G" .. #app.members .. R
-    elseif primary and extras and #extras > 0 then
-        badge = "  |cff7d9dff+" .. #extras .. R
-    end
+    -- premade tag: one Invite pulls the whole group; members are nested below.
+    local groupTag = app.isGroup and ("  |cffffa020\194\183 GRP " .. #app.members .. R) or ""
+    -- in a premade, show each member's role icon next to their class
+    local roleIcon = app.isGroup and roleIconInline(m.role, primary and 14 or 13) or ""
     if primary then
-        b.name:SetText(classIconInline(m.class) .. ccName(m) .. badge)
+        b.name:SetText(classIconInline(m.class) .. roleIcon .. ccName(m) .. groupTag)
     else
-        b.name:SetText("  " .. GREY .. "\226\134\179 " .. R .. classIconInline(m.class, 14) .. ccName(m) .. badge)
+        b.name:SetText("   " .. classIconInline(m.class, 14) .. roleIcon .. ccName(m) .. groupTag)
     end
 
     b.icons:SetText(fillIconsInline(app.fills))
-    b.score:SetText((m.score and m.score > 0) and (GREY .. m.score .. R) or "")
-    b.ilvl:SetText((m.ilvl and m.ilvl > 0) and (GREY .. math.floor(m.ilvl + 0.5) .. R) or "")
+    b.score:SetText((m.score and m.score > 0) and (scoreColorCode(m.score) .. m.score .. R) or "")
+    b.ilvl:SetText((m.ilvl and m.ilvl > 0) and (ilvlColorCode(m.ilvl) .. math.floor(m.ilvl + 0.5) .. R) or "")
     b.wcl:SetText(wclCell(m, self.dungeonKey))
 
     b:ClearAllPoints(); b:SetPoint("TOPLEFT", LX + 4, -y)
-    b:SetScript("OnEnter", function(btn) UI:ApplicantTip(btn, app, extras) end)
+    b:SetScript("OnEnter", function(btn) if btn.hover then btn.hover:Show() end; UI:ApplicantTip(btn, app) end)
     if b.hl then if invited then b.hl:Show() else b.hl:Hide() end end
 
     if invited then b.invite:SetText("Invited"); b.invite:Disable()
@@ -1020,28 +1205,56 @@ function UI:SetupApplicantRow(b, app, primary, extras, y)
     end)
     b.invite:Show(); b.decline:Show()
     b:Show()
+    return y + (primary and 20 or 18)
 end
 
--- condensed recap for the Applicants tab: what's still missing (gaps + utility)
-function UI:RenderApplicantRecap(y)
-    local cov = self.cov
-    local u = cov.utility
-    local parts = {}
-    for t in pairs(cov.missing) do
-        local ic = FILL_ICON[t]
-        parts[#parts + 1] = (ic and ("|T" .. ic .. ":14:14:0:0|t ") or "") .. (C.LABELS[t] or t)
-    end
-    if #u.kick.conf < 2 then parts[#parts + 1] = "|T" .. FILL_ICON.shortkick .. ":14:14:0:0|t 2nd Kick" end
-    if #u.lust.conf < 1 then parts[#parts + 1] = "|T" .. FILL_ICON.lust .. ":14:14:0:0|t Lust" end
-    if #u.battlerez.conf < 1 then parts[#parts + 1] = "|T" .. FILL_ICON.battlerez .. ":14:14:0:0|t Battle Rez" end
+-- a nested premade-member row under its leader: identity + stats only, no Invite
+-- (the leader's Invite accepts the whole group). Hovering shows the group tip.
+function UI:SetupMemberRow(b, app, member, y)
+    b.name:SetText("    " .. GREY .. "\226\134\179 " .. R .. classIconInline(member.class, 14) .. roleIconInline(member.role, 13) .. ccName(member))
+    b.icons:SetText("")
+    b.score:SetText((member.score and member.score > 0) and (scoreColorCode(member.score) .. member.score .. R) or "")
+    b.ilvl:SetText((member.ilvl and member.ilvl > 0) and (ilvlColorCode(member.ilvl) .. math.floor(member.ilvl + 0.5) .. R) or "")
+    b.wcl:SetText(wclCell(member, self.dungeonKey))
 
-    self.gapsText:ClearAllPoints(); self.gapsText:SetPoint("TOPLEFT", LX, -y)
-    if #parts > 0 then
-        self.gapsText:SetText(RED .. "Missing  " .. R .. table.concat(parts, "    "))
+    b:ClearAllPoints(); b:SetPoint("TOPLEFT", LX + 4, -y)
+    b:SetScript("OnEnter", function(btn) if btn.hover then btn.hover:Show() end; UI:ApplicantTip(btn, app) end)
+    if b.hl then b.hl:Hide() end
+    b.invite:Hide(); b.decline:Hide()
+    b:Show()
+    return y + 18
+end
+
+-- the "+N more / show fewer" toggle under a class group. Returns the next y.
+function UI:SetupExpander(e, ckey, hidden, expanded, y)
+    local plus  = "|TInterface\\Buttons\\UI-PlusButton-Up:14:14:0:0|t"
+    local minus = "|TInterface\\Buttons\\UI-MinusButton-Up:14:14:0:0|t"
+    if expanded then
+        e.fs:SetText(minus .. " " .. GREY .. "show fewer" .. R)
     else
-        self.gapsText:SetText(GREEN .. "Comp fully covered \226\156\147" .. R)
+        e.fs:SetText(plus .. " |cff7d9dff" .. hidden .. " more" .. R)
     end
-    self.gapsText:Show(); y = y + self.gapsText:GetStringHeight() + 4
+    e:ClearAllPoints(); e:SetPoint("TOPLEFT", LX + 4 + APPLCOLS.name.x + 20, -y)
+    e:SetScript("OnClick", function()
+        UI.expandedClasses[ckey] = (not UI.expandedClasses[ckey]) or nil
+        UI:Refresh()
+    end)
+    e:Show()
+    return y + 16
+end
+
+-- merged-coverage Applicants header: the dungeon ability strip (as on the
+-- Coverage tab), then a big, prominent kicks/lust/rez row, then a divider. No
+-- global count -- per-role counts live on the section headers.
+-- merged-coverage Applicants header: ability strip (incl. utility cells) + divider.
+function UI:RenderApplicantHeader(y)
+    y = self:RenderStrip(y)
+
+    self.applDivider:ClearAllPoints()
+    self.applDivider:SetPoint("TOPLEFT", LX, -y + 3)
+    self.applDivider:SetPoint("TOPRIGHT", self.child, "TOPLEFT", self.childW - LX, -y + 3)
+    self.applDivider:Show()
+    y = y + 8
 
     return y
 end
@@ -1049,13 +1262,10 @@ end
 function UI:RenderApplicants()
     local cov = self.cov
     local y = 4
-    y = self:RenderApplicantRecap(y)
     local needs = buildNeeds(cov)
     local apps = (ns.Applicants and ns.Applicants.Read(needs, self.dungeonKey)) or {}
 
-    self.h_appl:ClearAllPoints(); self.h_appl:SetPoint("TOPLEFT", LX, -y)
-    self.h_appl:SetText(WHITE .. "Applicants (" .. #apps .. ")" .. R .. "  " .. GREY .. "top " .. (ns.db.perClass or 3) .. " per class" .. R)
-    self.h_appl:Show(); y = y + 22
+    y = self:RenderApplicantHeader(y)
 
     if #apps == 0 then
         local msg = (ns.Applicants and ns.Applicants.HasListing())
@@ -1064,8 +1274,9 @@ function UI:RenderApplicants()
         self.applEmpty:ClearAllPoints(); self.applEmpty:SetPoint("TOPLEFT", LX, -y)
         self.applEmpty:SetText(GREY .. msg .. R)
         self.applEmpty:Show(); y = y + 18
-        for i = 1, 24 do self.applBtns[i]:Hide() end
+        for i = 1, APPL_MAX_ROWS do self.applBtns[i]:Hide() end
         for i = 1, 3 do self.applSecHeaders[i]:Hide(); self.applBoxes[i]:Hide() end
+        for _, e in ipairs(self.applExpanders) do e:Hide() end
         return y
     end
     self.applEmpty:Hide()
@@ -1092,30 +1303,48 @@ function UI:RenderApplicants()
     end
     y = y + 13
 
-    local ri, si = 0, 0
+    -- render one applicant row and, if it's a premade, its members nested below.
+    -- ri / y are upvalues so this stays in step with the section loop.
+    local ri = 0
+    local function renderApplicant(app, primary)
+        if ri >= APPL_MAX_ROWS then return end
+        ri = ri + 1
+        y = self:SetupApplicantRow(self.applBtns[ri], app, primary, y)
+        if app.isGroup then
+            for mi = 2, #app.members do
+                if ri >= APPL_MAX_ROWS then break end
+                ri = ri + 1
+                y = self:SetupMemberRow(self.applBtns[ri], app, app.members[mi], y)
+            end
+        end
+    end
+
+    local si, ei = 0, 0
     for _, def in ipairs(sectionDefs) do
         local cgroups = classGroups(groups[def.key])
         if #cgroups > 0 then
             si = si + 1
             local secHeader = self.applSecHeaders[si]
             secHeader:ClearAllPoints(); secHeader:SetPoint("TOPLEFT", LX, -y)
-            secHeader:SetText("|cff" .. rgbHex(def.accent) .. def.label .. R .. "  " .. GREY .. "(" .. #cgroups .. " classes)" .. R)
+            secHeader:SetText("|cff" .. rgbHex(def.accent) .. def.label .. R
+                .. "  " .. WHITE .. #groups[def.key] .. R)
             secHeader:Show()
             y = y + 16
 
             local boxTop = y - 1
             for _, g in ipairs(cgroups) do
-                if ri >= 24 then break end
-                local shown = math.min(ns.db.perClass or 3, #g.apps)
-                local extras = {}
-                for i = shown + 1, #g.apps do extras[#extras + 1] = g.apps[i] end
-                for idx = 1, shown do
-                    if ri >= 24 then break end
-                    ri = ri + 1
-                    local app = g.apps[idx]
-                    local primary = (idx == 1)
-                    self:SetupApplicantRow(self.applBtns[ri], app, primary, primary and extras or nil, y)
-                    y = y + (primary and 21 or 18)
+                if ri >= APPL_MAX_ROWS then break end
+                local ckey = def.key .. ":" .. g.class
+                local expanded = UI.expandedClasses[ckey]
+                local showN = expanded and #g.apps or 1
+                for idx = 1, showN do
+                    if ri >= APPL_MAX_ROWS then break end
+                    renderApplicant(g.apps[idx], idx == 1)
+                end
+                -- only offer the toggle when there's more than the one top pick
+                if #g.apps > 1 and ei < #self.applExpanders then
+                    ei = ei + 1
+                    y = self:SetupExpander(self.applExpanders[ei], ckey, #g.apps - 1, expanded, y)
                 end
             end
             local boxBottom = y + 1
@@ -1131,19 +1360,20 @@ function UI:RenderApplicants()
         end
     end
 
-    for i = ri + 1, 24 do self.applBtns[i]:Hide() end
+    for i = ri + 1, APPL_MAX_ROWS do self.applBtns[i]:Hide() end
     for i = si + 1, 3 do self.applSecHeaders[i]:Hide(); self.applBoxes[i]:Hide() end
+    for i = ei + 1, #self.applExpanders do self.applExpanders[i]:Hide() end
     return y
 end
 
-function UI:RenderInfo()
+-- the folded-in Info content (advanced disclosure on the Coverage tab): dispel
+-- load, dungeon note, missing buffs, who-covers-each-cast, scale. Returns next y.
+function UI:RenderAdvanced(y)
     local d = self.dungeon
-    local y = 4
 
-    -- player-relative headline: how many of THIS dungeon's removal demands your own
-    -- spec handles, plus the dungeon's class-agnostic dispel load.
+    -- how many of THIS dungeon's removal demands your own spec handles, plus the
+    -- dungeon's class-agnostic dispel load.
     local cov = self.cov
-    local pconf = (cov and cov.player and cov.player.conf) or {}
     local nCov, nTot = 0, 0
     if cov and cov.relevant then
         for t in pairs(cov.relevant) do
@@ -1161,8 +1391,17 @@ function UI:RenderInfo()
     self.infoNote:SetText(GREY .. (d.note or "") .. R)
     self.infoNote:Show(); y = y + self.infoNote:GetStringHeight() + 8
 
+    -- raid buffs: show the whole set, ones we HAVE bright, missing ones dimmed.
+    local btoks = {}
+    for _, b in ipairs(cov.buffs or {}) do
+        btoks[#btoks + 1] = classIconInline(b.class, 14) .. (b.have and WHITE or GREY) .. b.name .. R
+    end
+    self.buffsText:ClearAllPoints(); self.buffsText:SetPoint("TOPLEFT", LX, -y)
+    self.buffsText:SetText(GREY .. "Raid buffs   " .. R .. table.concat(btoks, "   "))
+    self.buffsText:Show(); y = y + self.buffsText:GetStringHeight() + 10
+
     self.infoCover:ClearAllPoints(); self.infoCover:SetPoint("TOPLEFT", LX, -y)
-    self.infoCover:SetText(WHITE .. "Who covers each cast" .. R .. "   " .. GREY .. "names = can handle it (kick it, or dispel its type)  \226\128\148  " .. R .. RED .. "red = gap" .. R)
+    self.infoCover:SetText(WHITE .. "Who covers each cast" .. R .. "   " .. GREY .. "names handle it \194\183 " .. R .. RED .. "red = gap" .. R)
     self.infoCover:Show(); y = y + 18
 
     local resolved = (cov and cov.resolved) or {}
@@ -1189,17 +1428,18 @@ function UI:RenderInfo()
         local row = self.infoRows[n]
         local handlers = handlersFor(a)
         local covered = #handlers > 0
-        local ic = FILL_ICON[a.t]
-        local iconStr = ic and ("|T" .. ic .. ":15:15:0:0|t ") or ""
-        local kickStr = a.kick and (" |T" .. FILL_ICON.shortkick .. ":13:13:0:0|t") or ""
-        local tag
+        -- one type icon per row (the dispel type, or a kick icon for interrupts);
+        -- no arrow glyph (it renders as tofu in the default font).
+        local typeIcon = FILL_ICON[a.t] or (a.kick and FILL_ICON.shortkick) or nil
+        local iconStr = typeIcon and ("|T" .. typeIcon .. ":15:15:0:0|t ") or ""
+        local right
         if covered then
-            tag = "  " .. GREY .. "\226\134\146 " .. R .. table.concat(handlers, GREY .. ", " .. R)
+            right = "   " .. table.concat(handlers, GREY .. ", " .. R)
         else
-            tag = "  " .. RED .. "needs " .. (a.kick and "interrupt" or (C.LABELS[a.t] or a.t)) .. R
+            right = "   " .. RED .. "needs " .. (a.kick and "interrupt" or (C.LABELS[a.t] or a.t)) .. R
         end
-        local nameCol = covered and WHITE or "|cffffe0e0"
-        row:SetText(iconStr .. nameCol .. a.src .. R .. GREY .. " \226\128\148 " .. a.ab .. R .. kickStr .. tag)
+        local abCol = covered and WHITE or "|cffffe0e0"
+        row:SetText(iconStr .. abCol .. a.ab .. R .. right .. "   " .. GREY .. a.src .. R)
         row:ClearAllPoints(); row:SetPoint("TOPLEFT", LX, -y)
         row:Show(); y = y + 16
     end
@@ -1213,13 +1453,6 @@ function UI:RenderInfo()
     self.scaleSlider:SetValue(ns.db.scale or 1)
     self.scaleSlider:Show(); y = y + 24
 
-    self.perClassLabel:ClearAllPoints(); self.perClassLabel:SetPoint("TOPLEFT", LX, -y)
-    self.perClassLabel:SetText("Applicants per class: " .. (ns.db.perClass or 3))
-    self.perClassLabel:Show(); y = y + 18
-    self.perClassSlider:ClearAllPoints(); self.perClassSlider:SetPoint("TOPLEFT", LX, -y)
-    self.perClassSlider:SetValue(ns.db.perClass or 3)
-    self.perClassSlider:Show(); y = y + 24
-
     return y
 end
 
@@ -1227,6 +1460,7 @@ end
 function UI:Refresh()
     local f = self.frame
     if not f then return end
+    if ns.db.tab == "info" then ns.db.tab = "coverage" end  -- Info folded into Coverage
 
     local key = ns.db.dungeon
     local detected = self:DetectDungeon()
@@ -1255,8 +1489,6 @@ function UI:Refresh()
     local bottom
     if tab == "applicants" then
         bottom = self:RenderApplicants()
-    elseif tab == "info" then
-        bottom = self:RenderInfo()
     else
         bottom = self:RenderCoverage()
     end
