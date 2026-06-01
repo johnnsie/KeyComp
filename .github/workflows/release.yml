@@ -47,6 +47,18 @@ jobs:
         id: zip
         run: echo "path=$(ls dist/KeyComp-*.zip | head -n1)" >> "$GITHUB_OUTPUT"
 
+      - name: Extract release notes
+        run: |
+          # pull this tag's section out of CHANGELOG.md (between its "## <tag>"
+          # heading and the next "## " heading) for the CF + GitHub release notes.
+          awk -v h="## $GITHUB_REF_NAME" '
+            substr($0,1,length(h))==h && (length($0)==length(h) || substr($0,length(h)+1,1)==" ") {g=1; next}
+            g && /^## / {exit}
+            g {print}
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then echo "Release $GITHUB_REF_NAME." > release-notes.md; fi
+          echo "=== release notes ==="; cat release-notes.md
+
       - name: Publish to CurseForge
         env:
           CF_API_KEY: ${{ secrets.CF_API_KEY }}
@@ -55,9 +67,9 @@ jobs:
           python tools/cf_publish.py --zip "${{ steps.zip.outputs.path }}" \
             --release release \
             --display-name "KeyComp ${GITHUB_REF_NAME#v}" \
-            --changelog "Release ${GITHUB_REF_NAME}. See the project page for details."
+            --changelog "$(cat release-notes.md)"
 
       - name: GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" "${{ steps.zip.outputs.path }}" --generate-notes --title "KeyComp ${GITHUB_REF_NAME#v}"
+        run: gh release create "$GITHUB_REF_NAME" "${{ steps.zip.outputs.path }}" --notes-file release-notes.md --title "KeyComp ${GITHUB_REF_NAME#v}"

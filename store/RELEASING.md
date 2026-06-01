@@ -6,14 +6,15 @@ Releases. Pushing a version tag builds and publishes everything — nobody uploa
 a file by hand.
 
 ## Quick release — the only steps you take
-1. Bump `## Version:` in `KeyComp/KeyComp.toc` to the new version (it must match the tag).
-2. Commit it.
-3. Tag and push:
+1. Add a `## vX.Y.Z` section to `CHANGELOG.md` (its body becomes the CurseForge + GitHub release notes).
+2. Bump `## Version:` in `KeyComp/KeyComp.toc` to the new version (it must match the tag).
+3. Commit them.
+4. Tag and push:
    ```
    git tag -a v0.1.2 -m "what changed"
    git push origin main --tags
    ```
-GitHub Actions does the rest: build → CurseForge upload → GitHub Release.
+GitHub Actions does the rest: build → extract the `CHANGELOG.md` section → CurseForge upload → GitHub Release (both using those notes).
 
 ## How it works — manual vs automated
 

@@ -30,6 +30,9 @@ local GREY   = "|cff999999"
 local WHITE  = "|cffffffff"
 local WCLC   = "|cffb389ff"  -- WCL purple (M+ DPS data)
 local MEDAL_CODE = { g = "|cffffd100", s = "|cffc7c7cf", b = "|cffcd7f32" }  -- WCL gold/silver/bronze
+-- status marks as textures (the ✓/✗ glyphs are tofu in WoW's default font)
+local OK_ICON = "|TInterface\\RaidFrame\\ReadyCheck-Ready:14:14:0:0|t"
+local NO_ICON = "|TInterface\\RaidFrame\\ReadyCheck-NotReady:14:14:0:0|t"
 local R      = "|r"
 
 local STATUS = {
@@ -1211,7 +1214,9 @@ end
 -- a nested premade-member row under its leader: identity + stats only, no Invite
 -- (the leader's Invite accepts the whole group). Hovering shows the group tip.
 function UI:SetupMemberRow(b, app, member, y)
-    b.name:SetText("    " .. GREY .. "\226\134\179 " .. R .. classIconInline(member.class, 14) .. roleIconInline(member.role, 13) .. ccName(member))
+    -- nested under the leader: indent + a dim middle-dot marker (the U+21B3 hook
+    -- arrow used before is tofu in WoW's default font)
+    b.name:SetText("       " .. GREY .. "\194\183  " .. R .. classIconInline(member.class, 14) .. roleIconInline(member.role, 13) .. ccName(member))
     b.icons:SetText("")
     b.score:SetText((member.score and member.score > 0) and (scoreColorCode(member.score) .. member.score .. R) or "")
     b.ilvl:SetText((member.ilvl and member.ilvl > 0) and (ilvlColorCode(member.ilvl) .. math.floor(member.ilvl + 0.5) .. R) or "")
@@ -1371,37 +1376,50 @@ end
 function UI:RenderAdvanced(y)
     local d = self.dungeon
 
-    -- how many of THIS dungeon's removal demands your own spec handles, plus the
-    -- dungeon's class-agnostic dispel load.
     local cov = self.cov
-    local nCov, nTot = 0, 0
-    if cov and cov.relevant then
-        for t in pairs(cov.relevant) do
-            nTot = nTot + 1
-            if cov.youCovers and cov.youCovers[t] then nCov = nCov + 1 end
-        end
-    end
+    local pm = cov and cov.player and cov.player.m
+    local pconf = (cov and cov.player and cov.player.conf) or {}
+
+    -- ---- YOUR JOB: what your spec is on the hook for in this dungeon ----
     local pcol = PRIORITY_COLOR[d.priority] or WHITE
+    local who = pm and (classColored(pm.class) .. (pm.spec and (GREY .. "  " .. pm.spec .. R) or "")) or (GREY .. "you" .. R)
     self.infoPrio:ClearAllPoints(); self.infoPrio:SetPoint("TOPLEFT", LX, -y)
-    self.infoPrio:SetText(WHITE .. "You cover " .. nCov .. "/" .. nTot .. " removal types" .. R
-        .. "   " .. GREY .. "dispel load " .. R .. pcol .. (d.priority or "?") .. R)
+    self.infoPrio:SetText(WHITE .. "YOUR JOB" .. R .. "   " .. who
+        .. GREY .. "     \194\183  dungeon load " .. R .. pcol .. (d.priority or "?") .. R)
     self.infoPrio:Show(); y = y + 20
 
-    self.infoNote:ClearAllPoints(); self.infoNote:SetPoint("TOPLEFT", LX, -y)
-    self.infoNote:SetText(GREY .. (d.note or "") .. R)
-    self.infoNote:Show(); y = y + self.infoNote:GetStringHeight() + 8
-
-    -- raid buffs: show the whole set, ones we HAVE bright, missing ones dimmed.
-    local btoks = {}
-    for _, b in ipairs(cov.buffs or {}) do
-        btoks[#btoks + 1] = classIconInline(b.class, 14) .. (b.have and WHITE or GREY) .. b.name .. R
+    -- removal types this dungeon demands that YOUR spec can dispel, + interrupt
+    local jobs = {}
+    for _, t in ipairs(C.REMOVAL_ORDER) do
+        if cov and cov.relevant and cov.relevant[t] and pconf[t] then
+            local ic = FILL_ICON[t]
+            jobs[#jobs + 1] = (ic and ("|T" .. ic .. ":16:16:0:0|t ") or "") .. (C.LABELS[t] or t)
+        end
     end
-    self.buffsText:ClearAllPoints(); self.buffsText:SetPoint("TOPLEFT", LX, -y)
-    self.buffsText:SetText(GREY .. "Raid buffs   " .. R .. table.concat(btoks, "   "))
-    self.buffsText:Show(); y = y + self.buffsText:GetStringHeight() + 10
+    local hasKick = false
+    for _, a in ipairs(d.abilities or {}) do if a.kick then hasKick = true; break end end
+    if hasKick and (pconf.shortkick or pconf.interrupt) then
+        jobs[#jobs + 1] = "|T" .. FILL_ICON.shortkick .. ":16:16:0:0|t Interrupt"
+    end
+    self.infoNeed:ClearAllPoints(); self.infoNeed:SetPoint("TOPLEFT", LX, -y)
+    if #jobs > 0 then
+        self.infoNeed:SetText("    " .. GREEN .. table.concat(jobs, "      ") .. R)
+    else
+        self.infoNeed:SetText("    " .. GREY .. "Nothing here needs your dispels \226\128\148 focus dps / hps / kicks." .. R)
+    end
+    self.infoNeed:Show(); y = y + self.infoNeed:GetStringHeight() + 8
 
+    if d.note and d.note ~= "" then
+        self.infoNote:ClearAllPoints(); self.infoNote:SetPoint("TOPLEFT", LX, -y)
+        self.infoNote:SetText(GREY .. d.note .. R)
+        self.infoNote:Show(); y = y + self.infoNote:GetStringHeight() + 10
+    else
+        self.infoNote:Hide()
+    end
+
+    -- ---- EVERY CAST: who handles each dangerous cast ----
     self.infoCover:ClearAllPoints(); self.infoCover:SetPoint("TOPLEFT", LX, -y)
-    self.infoCover:SetText(WHITE .. "Who covers each cast" .. R .. "   " .. GREY .. "names handle it \194\183 " .. R .. RED .. "red = gap" .. R)
+    self.infoCover:SetText(WHITE .. "EVERY CAST" .. R .. "   " .. OK_ICON .. GREY .. " covered  \194\183  " .. R .. NO_ICON .. GREY .. " gap" .. R)
     self.infoCover:Show(); y = y + 18
 
     local resolved = (cov and cov.resolved) or {}
@@ -1413,7 +1431,7 @@ function UI:RenderAdvanced(y)
         for _, r in ipairs(resolved) do
             local can = (a.kick and (r.conf.shortkick or r.conf.interrupt)) or ((not a.kick) and r.conf[a.t])
             if can then
-                local nm = ((r.m.name or "?"):match("^[^-]+")) or r.m.name or "?"
+                local nm = r.m.isPlayer and "You" or (((r.m.name or "?"):match("^[^-]+")) or r.m.name or "?")
                 local cs = classColorStr(r.m.class)
                 names[#names + 1] = (cs and ("|c" .. cs .. nm .. R)) or nm
             end
@@ -1428,23 +1446,38 @@ function UI:RenderAdvanced(y)
         local row = self.infoRows[n]
         local handlers = handlersFor(a)
         local covered = #handlers > 0
-        -- one type icon per row (the dispel type, or a kick icon for interrupts);
-        -- no arrow glyph (it renders as tofu in the default font).
+        -- lead with a scannable status mark; one type icon (dispel type, or kick
+        -- icon for interrupts); no boss-name text (that was the clutter).
+        local mark = covered and OK_ICON or NO_ICON
         local typeIcon = FILL_ICON[a.t] or (a.kick and FILL_ICON.shortkick) or nil
         local iconStr = typeIcon and ("|T" .. typeIcon .. ":15:15:0:0|t ") or ""
+        local abCol = covered and WHITE or "|cffffb0b0"
         local right
         if covered then
-            right = "   " .. table.concat(handlers, GREY .. ", " .. R)
+            right = table.concat(handlers, GREY .. ", " .. R)
         else
-            right = "   " .. RED .. "needs " .. (a.kick and "interrupt" or (C.LABELS[a.t] or a.t)) .. R
+            right = RED .. "needs " .. (a.kick and "interrupt" or (C.LABELS[a.t] or a.t)) .. R
         end
-        local abCol = covered and WHITE or "|cffffe0e0"
-        row:SetText(iconStr .. abCol .. a.ab .. R .. right .. "   " .. GREY .. a.src .. R)
+        row:SetText(mark .. "  " .. iconStr .. abCol .. a.ab .. R .. "    " .. right)
         row:ClearAllPoints(); row:SetPoint("TOPLEFT", LX, -y)
         row:Show(); y = y + 16
     end
     for i = n + 1, 16 do self.infoRows[i]:Hide() end
-    y = y + 12
+    y = y + 14
+
+    -- ---- RAID BUFFS & DEBUFFS: clear have (green check) / missing (red x) ----
+    self.infoKey:ClearAllPoints(); self.infoKey:SetPoint("TOPLEFT", LX, -y)
+    self.infoKey:SetText(WHITE .. "RAID BUFFS & DEBUFFS" .. R)
+    self.infoKey:Show(); y = y + 18
+    local btoks = {}
+    for _, b in ipairs(cov.buffs or {}) do
+        local bm = b.have and OK_ICON or NO_ICON
+        local bc = b.have and WHITE or "|cffff8080"
+        btoks[#btoks + 1] = bm .. classIconInline(b.class, 13) .. bc .. b.name .. R
+    end
+    self.buffsText:ClearAllPoints(); self.buffsText:SetPoint("TOPLEFT", LX, -y)
+    self.buffsText:SetText("    " .. table.concat(btoks, "     "))
+    self.buffsText:Show(); y = y + self.buffsText:GetStringHeight() + 12
 
     self.scaleLabel:ClearAllPoints(); self.scaleLabel:SetPoint("TOPLEFT", LX, -y)
     self.scaleLabel:SetText("Panel scale: " .. math.floor((ns.db.scale or 1) * 100 + 0.5) .. "%")
