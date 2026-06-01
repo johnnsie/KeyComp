@@ -127,18 +127,15 @@ local function classIconInline(classFile, size)
         s, s, c[1] * 256, c[2] * 256, c[3] * 256, c[4] * 256)
 end
 
--- inline tank/healer/dps role icon (texcoords into the LFG role-portrait sheet).
-local ROLE_TC = {
-    TANK    = { 0, 19, 22, 41 },
-    HEALER  = { 20, 39, 1, 20 },
-    DAMAGER = { 20, 39, 22, 41 },
-}
+-- inline tank/healer/dps role icon. Uses the modern role atlases — the old
+-- UI-LFG-ICON-PORTRAITROLES texture path renders blank on Midnight (12.x).
+local ROLE_ATLAS = { TANK = "roleicon-tiny-tank", HEALER = "roleicon-tiny-healer", DAMAGER = "roleicon-tiny-dps" }
 local function roleIconInline(role, size)
-    local c = ROLE_TC[role]
-    if not c then return "" end
+    local a = ROLE_ATLAS[role]
+    if not a then return "" end
     local s = size or 13
-    return string.format("|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:%d:%d:0:0:64:64:%d:%d:%d:%d|t ",
-        s, s, c[1], c[2], c[3], c[4])
+    if CreateAtlasMarkup then return CreateAtlasMarkup(a, s, s) .. " " end
+    return "|A:" .. a .. ":" .. s .. ":" .. s .. "|a "
 end
 
 -- applicant table column geometry: x offset within a row + width. The row button
@@ -161,7 +158,13 @@ local function fillIconsInline(fills)
 end
 
 -- "|cAARRGGBB" color escape for an M+ rating, using the game's own rarity ramp.
+-- M+ rating tiers above the game's own ramp: gold >= 3700, platinum >= 4000.
+local RIO_GOLD, RIO_PLAT = 3700, 4000
 local function scoreColorCode(score)
+    if score then
+        if score >= RIO_PLAT then return "|cff66ddff" end   -- platinum
+        if score >= RIO_GOLD then return "|cffffcc00" end    -- gold
+    end
     if score and score > 0 and C_ChallengeMode and C_ChallengeMode.GetDungeonScoreRarityColor then
         local c = C_ChallengeMode.GetDungeonScoreRarityColor(score)
         if c and c.GenerateHexColor then return "|c" .. c:GenerateHexColor() end
@@ -180,6 +183,10 @@ end
 
 -- rarity color as r,g,b components (for tooltip AddLine, which wants components).
 local function scoreRGB(score)
+    if score then
+        if score >= RIO_PLAT then return 0.40, 0.87, 1.0 end   -- platinum
+        if score >= RIO_GOLD then return 1.0, 0.80, 0.0 end     -- gold
+    end
     if score and score > 0 and C_ChallengeMode and C_ChallengeMode.GetDungeonScoreRarityColor then
         local c = C_ChallengeMode.GetDungeonScoreRarityColor(score)
         if c then return c.r, c.g, c.b end
@@ -1075,8 +1082,7 @@ function UI:RenderCoverage()
     for i = 1, 5 do
         local role = slots[i]
         local tex = self.roleSlots[i]
-        local c = ROLE_TC[role]
-        tex:SetTexCoord(c[1] / 64, c[2] / 64, c[3] / 64, c[4] / 64)
+        tex:SetAtlas(ROLE_ATLAS[role])
         usedBy[role] = usedBy[role] + 1
         local filled = usedBy[role] <= fillBy[role]
         tex:SetDesaturated(not filled)

@@ -1,5 +1,9 @@
 # KeyComp changelog
 
+## v0.2.2
+- **Fixed the tank / heal / dps role icons** on nested premade members and the Coverage role-composition recap — they now use Midnight's role atlases instead of a texture path that rendered blank.
+- **Applicant M+ rating tiers**: scores now show **gold at 3700+** and **platinum at 4000+**, above the game's normal rarity colors.
+
 ## v0.2.1
 WCL data refresh + a clarity pass on the Advanced coverage panel.
 
