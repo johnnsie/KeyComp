@@ -1,5 +1,8 @@
 # KeyComp changelog
 
+## v0.2.4
+- **Warcraft Logs data refreshed** to the current EU + US Mythic+ ladder.
+
 ## v0.2.3
 - Maintenance: updated the addon author handle.
 

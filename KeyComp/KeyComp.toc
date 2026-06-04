@@ -4,7 +4,7 @@
 ## Title: KeyComp
 ## Notes: Live Mythic+ group utility & dispel coverage for any class (Midnight S1)
 ## Author: Lepreconjon
-## Version: 0.2.3
+## Version: 0.2.4
 ## SavedVariables: KeyCompDB
 ## IconTexture: Interface\Icons\Spell_Holy_DispelMagic
 
