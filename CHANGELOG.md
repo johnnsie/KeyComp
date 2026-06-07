@@ -1,5 +1,9 @@
 # KeyComp changelog
 
+## v0.2.5
+- **Warcraft Logs data refreshed** to the current EU + US Mythic+ ladder.
+- **Shaman curse dispel corrected** — Elemental / Enhancement can remove Curse via the Cleanse Spirit talent, so it now shows as a *potential* ("maybe") dispel instead of Resto-only.
+
 ## v0.2.4
 - **Warcraft Logs data refreshed** to the current EU + US Mythic+ ladder.
 
