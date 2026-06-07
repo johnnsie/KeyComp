@@ -25,8 +25,9 @@ local _, ns = ...
 -- Key facts that surprise people:
 --   * Death Knight has NO ally dispels at all.
 --   * Magic dispel is healer-spec only.
---   * Curse: Mage (all specs), Druid (all, Remove Corruption), Shaman RESTO ONLY,
---     Evoker (Cauterizing). Ele/Enh shaman can NOT remove curse.
+--   * Curse: Mage (all specs), Druid (all, Remove Corruption), Evoker (Cauterizing),
+--     Shaman (Resto = Purify Spirit, reliable -> confirmed; Ele/Enh = Cleanse Spirit
+--     class talent -> "maybe"/potential, since you can't see their talents).
 --   * Bleed: only Evoker (Cauterizing Flame).
 --   * Soothe (Enrage): Druid, Hunter (Tranq), Rogue (Shiv), Evoker (Overawe talent).
 -- =========================================================================
@@ -133,7 +134,12 @@ local CLASSES = {
     },
     SHAMAN = {
         -- Wind Shear (interrupt, all specs; 12s Ele/Enh = short, 30s Resto = long).
-        -- Purge; Bloodlust. Curse + Magic only on Resto (Purify/Cleanse Spirit).
+        -- Purge; Bloodlust. Magic dispel only on Resto (Purify Spirit).
+        -- Curse: Resto removes it reliably (Purify Spirit) -> confirmed. Ele/Enh CAN
+        -- remove curse too, via the Cleanse Spirit class talent -- but it's an optional
+        -- pick you can't see in the group finder, so it's "maybe" (potential), not
+        -- confirmed. Cleanse Spirit is available to every spec, so curse lives in
+        -- `talented` (which Resolve always merges into potential).
         always = set("interrupt", "purge", "lust"),
         byRole = {
             HEALER  = set("magic", "curse"),
@@ -144,6 +150,7 @@ local CLASSES = {
             Elemental   = set("shortkick"),
             Enhancement = set("shortkick"),
         },
+        talented  = set("curse"),
         potential = set("magic", "curse", "shortkick"),
     },
     WARLOCK = {
